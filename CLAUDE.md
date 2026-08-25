@@ -34,6 +34,27 @@ compatibile con tutti e quattro.
    raccomandazione.
 4. **Niente clustering** a meno che non sia strettamente necessario al problema.
 
+## Il deliverable e' il documento
+
+Il progetto viene valutato PRINCIPALMENTE su `docs/documentazione.md`, non sul
+codice. Da questo discende:
+
+- Ogni fase si chiude scrivendo la sua sezione di `docs/documentazione.md`, con
+  le sue tabelle e le sue figure. Una fase senza la sua sezione scritta non e'
+  chiusa.
+- Prima di implementare qualsiasi cosa, chiediti: quale tabella o quale figura
+  del documento produce? Se non ne produce nessuna e non e' un prerequisito di
+  qualcosa che ne produce, proponi di tagliarla invece di scriverla.
+- Tutte le figure vanno in `results/` come PNG a 150 dpi, con assi etichettati e
+  didascalia gia' scritta nel documento.
+- Tutte le tabelle riportano media e deviazione standard, mai un singolo run.
+- Il testo del documento e' in italiano, in prosa continua. Niente elenchi
+  puntati al posto delle spiegazioni, niente screenshot di codice: se serve
+  mostrare del codice si riporta come testo, e solo le poche righe che contano
+  davvero (per esempio una regola ASP).
+- Le voci di `docs/decisioni.md` sono la materia prima della sezione sulle scelte
+  di progetto: vanno scritte gia' in una forma travasabile, non come appunti.
+
 ## Stack tecnico: chiuso
 
 Python 3.11+ (verificato su 3.14.6), ambiente virtuale `venv`.

@@ -2,40 +2,13 @@
 # Configurazione del progetto - pianificatore robusto su trasporto pubblico
 # =============================================================================
 #
-# ISTRUZIONI PER IL PRIMO AVVIO
-# -----------------------------
-# Tutti i valori che iniziano con "INSERIRE_QUI_" sono segnaposto. Il collector
-# si RIFIUTA di partire finche' ne trova anche uno solo fra i feed obbligatori:
-# e' una scelta deliberata, perche' l'errore piu' costoso in questo progetto e'
-# accorgersi dopo tre giorni di non aver raccolto nulla.
+# Il collector si RIFIUTA di partire se un indirizzo obbligatorio inizia ancora
+# con "INSERIRE_QUI_": e' una scelta deliberata, perche' l'errore piu' costoso in
+# questo progetto e' accorgersi dopo tre giorni di non aver raccolto nulla.
 #
-# Per ogni citta' servono due indirizzi:
-#
-#   1) url_gtfs_statico
-#      Un file .zip con l'orario ufficiale (stops.txt, trips.txt, stop_times.txt,
-#      calendar.txt, ...). Sulle pagine open data compare come "GTFS", "GTFS
-#      statico", "orario programmato" o "static schedule".
-#
-#   2) feed_rt.trip_updates                              <-- IL PIU' IMPORTANTE
-#      Un endpoint che restituisce un protobuf GTFS Real-Time con entita' di tipo
-#      TripUpdate. E' l'unica fonte dei RITARDI: senza questo il progetto non ha
-#      dati e non e' realizzabile. Sulle pagine open data compare come
-#      "GTFS-RT TripUpdates", "trip updates", "aggiornamenti corse".
-#      ATTENZIONE: molte agenzie pubblicano solo le posizioni dei veicoli. Prima
-#      di impegnare settimane di raccolta, verificate con:
-#          python -m src.collector.poll_realtime --diagnostica <url>
-#      che il feed contenga davvero stop_time_update con ritardi.
-#
-#   3) feed_rt.vehicle_positions                                  (facoltativo)
-#      Posizioni dei veicoli. Non contiene ritardi in forma diretta, ma e' la
-#      rete di sicurezza: se i trip_updates si rivelassero poveri o intermittenti
-#      i passaggi si possono ricostruire dalle posizioni. Non e' recuperabile a
-#      posteriori, quindi conviene raccoglierlo fin dall'inizio.
-#      Se una citta' non lo espone, mettere: vehicle_positions: null
-#
-# Dove cercare gli indirizzi: catalogo Mobility Database, Transit.land, la
-# sezione "open data" del sito dell'azienda di trasporto, i portali open data
-# comunali e regionali.
+# Per verificare che un feed contenga davvero i ritardi PRIMA di adottarlo:
+#     python scripts/verifica_feed.py
+#     python -m src.collector.poll_realtime --diagnostica <url>
 #
 # =============================================================================
 
@@ -59,11 +32,15 @@ raccolta:
   backoff_base_secondi: 2.0
   backoff_max_secondi: 20.0
 
-  # Scarica l'orario statico una volta al giorno e lo archivia solo se il suo
-  # SHA-256 e' cambiato. Serve a mantenere joinabili i dump real-time: gli
-  # identificativi di corsa hanno senso solo rispetto alla versione dell'orario
-  # in vigore quel giorno.
+  # Controlla l'orario statico una volta al giorno. Quando l'agenzia pubblica
+  # anche il file .md5, il confronto costa una cinquantina di byte invece
+  # dell'intero archivio.
   snapshot_gtfs_statico: true
+
+  # Oltre questa durata senza una raccolta riuscita, la finestra viene registrata
+  # come interruzione in gaps.jsonl. Cinque minuti sono cinque tick mancati: un
+  # valore piu' basso segnalerebbe come interruzione un singolo errore isolato.
+  soglia_interruzione_secondi: 300
 
   cartella_rt: data/raw/rt
   cartella_gtfs: data/raw/gtfs
@@ -74,29 +51,43 @@ raccolta:
   user_agent: "progetto-icon-tpl/0.1 (raccolta dati per progetto universitario)"
 
 citta:
-  # -------------------------------------------------------------------------
-  # Rinominare "citta_a" con il nome reale (minuscolo, senza spazi: diventa un
-  # nome di cartella sotto data/raw/rt/).
-  # -------------------------------------------------------------------------
-  - nome: citta_a
+  # ---------------------------------------------------------------------------
+  # ROMA - Roma Mobilita'
+  # L'orario statico cambia quasi ogni giorno e i trip_id non sono stabili nel
+  # tempo: senza la versione statica valida nel giorno di ogni osservazione, in
+  # backtesting non si potrebbero ricostruire gli orari programmati. Per questo
+  # e' configurato anche l'indirizzo del .md5, che permette di accorgersi del
+  # cambiamento scaricando una cinquantina di byte invece dell'intero archivio.
+  # ---------------------------------------------------------------------------
+  - nome: roma
     attiva: true
-    # Fuso orario IANA dell'azienda di trasporto. Determina la data di servizio
-    # usata per raggruppare i dump in cartelle giornaliere.
     fuso_orario: Europe/Rome
-    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_CITTA_A
+    url_gtfs_statico: https://romamobilita.it/sites/default/files/rome_static_gtfs.zip
+    url_gtfs_statico_md5: https://romamobilita.it/sites/default/files/rome_static_gtfs.zip.md5
     feed_rt:
-      trip_updates: INSERIRE_QUI_URL_TRIP_UPDATES_CITTA_A
-      vehicle_positions: INSERIRE_QUI_URL_VEHICLE_POSITIONS_CITTA_A
-    # Solo se l'agenzia richiede una chiave. Esempio:
-    #   intestazioni_http:
-    #     Authorization: "Bearer xxxxxxxx"
+      trip_updates: https://romamobilita.it/sites/default/files/rome_rtgtfs_trip_updates_feed.pb
+      vehicle_positions: https://romamobilita.it/sites/default/files/rome_rtgtfs_vehicle_positions_feed.pb
     intestazioni_http: {}
 
-  - nome: citta_b
+  # ---------------------------------------------------------------------------
+  # TORINO - GTT
+  # Gli indirizzi sono in HTTPS e non in HTTP: verificato il 2026-08-25 che
+  # l'host percorsieorari.gtt.to.it NON accetta connessioni sulla porta 80 (la
+  # connessione TCP scade dopo ~15 s) mentre sulla 443 risponde in 0,1 s. Con
+  # http:// entrambi i feed erano irraggiungibili; con https:// restituiscono
+  # 383 trip_update e 2.210 stop_time_update.
+  #
+  # MANCA ANCORA l'orario statico. Finche' non c'e', i dump real-time di Torino
+  # vengono raccolti ma NON saranno interpretabili in Fase 3, perche' non si
+  # potra' risalire agli orari programmati. Cercarlo sul portale open data del
+  # Comune di Torino / GTT (voce "GTFS" o "orario programmato") e incollarlo qui.
+  # ---------------------------------------------------------------------------
+  - nome: torino
     attiva: true
     fuso_orario: Europe/Rome
-    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_CITTA_B
+    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_TORINO
+    url_gtfs_statico_md5: null
     feed_rt:
-      trip_updates: INSERIRE_QUI_URL_TRIP_UPDATES_CITTA_B
-      vehicle_positions: INSERIRE_QUI_URL_VEHICLE_POSITIONS_CITTA_B
+      trip_updates: https://percorsieorari.gtt.to.it/das_gtfsrt/trip_update.aspx
+      vehicle_positions: https://percorsieorari.gtt.to.it/das_gtfsrt/vehicle_position.aspx
     intestazioni_http: {}

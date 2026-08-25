@@ -85,6 +85,17 @@ ESITO_ERRORE_RETE = "errore_rete"
 ESITO_ERRORE_HTTP = "errore_http"
 ESITO_NON_VALIDO = "payload_non_valido"
 
+# Nomi dei file di servizio. Iniziano con "_" (tranne quelli richiesti altrove
+# con un nome preciso) per restare in cima all'elenco e non essere scambiati per
+# dati raccolti.
+NOME_INDICE_GTFS = "index.json"
+NOME_BATTITO = "_battito.json"
+NOME_GAPS = "gaps.jsonl"
+
+# Cause registrate in gaps.jsonl.
+CAUSA_PROCESSO_FERMO = "processo_non_attivo"
+CAUSA_ERRORI_RETE = "errori_di_rete_prolungati"
+
 
 # =============================================================================
 # Eccezioni
@@ -115,6 +126,7 @@ class ConfigRaccolta:
     backoff_base_secondi: float
     backoff_max_secondi: float
     snapshot_gtfs_statico: bool
+    soglia_interruzione_secondi: float
     cartella_rt: Path
     cartella_gtfs: Path
     cartella_log: Path
@@ -134,8 +146,22 @@ class ConfigCitta:
     attiva: bool
     fuso_orario: str
     url_gtfs_statico: str | None
+    url_gtfs_statico_md5: str | None
     feed_rt: dict[str, str]
     intestazioni_http: dict[str, str]
+
+    @property
+    def indirizzi_in_chiaro(self) -> tuple[str, ...]:
+        """Indirizzi serviti in HTTP anziche' HTTPS.
+
+        Non e' un errore di configurazione (GTT pubblica i propri feed solo in
+        chiaro, e rifiutarli significherebbe rinunciare a Torino), ma va tenuto
+        sotto gli occhi: il traffico e' leggibile e alterabile da chiunque stia
+        sul percorso. Vedere anche il controllo che vieta di inviare credenziali
+        su un indirizzo non cifrato.
+        """
+        candidati = [self.url_gtfs_statico, self.url_gtfs_statico_md5, *self.feed_rt.values()]
+        return tuple(u for u in candidati if isinstance(u, str) and u.lower().startswith("http://"))
 
 
 @dataclass(frozen=True)
@@ -215,19 +241,41 @@ def _leggi_citta(grezza: Any, indice: int, problemi: list[str]) -> ConfigCitta |
     grezzo_statico = grezza.get("url_gtfs_statico")
     statico = grezzo_statico.strip() if _url_utilizzabile(grezzo_statico) else None
 
+    grezzo_md5 = grezza.get("url_gtfs_statico_md5")
+    md5 = grezzo_md5.strip() if _url_utilizzabile(grezzo_md5) else None
+    if md5 is not None and statico is None:
+        problemi.append(
+            f"{etichetta}: 'url_gtfs_statico_md5' e' configurato ma 'url_gtfs_statico' no. "
+            "L'impronta da sola non serve a nulla: senza l'archivio non c'e' cosa verificare."
+        )
+
     intestazioni = grezza.get("intestazioni_http") or {}
     if not isinstance(intestazioni, dict):
         problemi.append(f"{etichetta}: 'intestazioni_http' deve essere un blocco di chiave/valore.")
         intestazioni = {}
 
-    return ConfigCitta(
+    interpretata = ConfigCitta(
         nome=nome,
         attiva=attiva,
         fuso_orario=fuso,
         url_gtfs_statico=statico,
+        url_gtfs_statico_md5=md5,
         feed_rt=feed,
         intestazioni_http={str(k): str(v) for k, v in intestazioni.items()},
     )
+
+    # Gli indirizzi in HTTP sono ammessi (senza, Torino sarebbe fuori dal
+    # progetto), ma spedirci sopra delle credenziali no: viaggerebbero in chiaro
+    # e sarebbero leggibili da chiunque stia sul percorso. Meglio un rifiuto
+    # all'avvio che una chiave d'accesso regalata alla rete per settimane.
+    if interpretata.intestazioni_http and interpretata.indirizzi_in_chiaro:
+        problemi.append(
+            f"{etichetta}: 'intestazioni_http' non e' vuoto ma alcuni indirizzi sono in HTTP "
+            f"({', '.join(interpretata.indirizzi_in_chiaro)}). Le credenziali viaggerebbero in "
+            "chiaro: usare HTTPS, oppure togliere le intestazioni."
+        )
+
+    return interpretata
 
 
 def interpreta_configurazione(grezza: Any, radice: Path) -> Configurazione:
@@ -263,6 +311,7 @@ def interpreta_configurazione(grezza: Any, radice: Path) -> Configurazione:
     tentativi = int(_numero("tentativi_max", 3, 1))
     backoff_base = _numero("backoff_base_secondi", 2.0, 0.1)
     backoff_max = _numero("backoff_max_secondi", 20.0, 0.1)
+    soglia_interruzione = _numero("soglia_interruzione_secondi", 300.0, 1.0)
 
     # Un timeout piu' lungo dell'intervallo farebbe accumulare ritardo a ogni
     # tick, snaturando la cadenza di campionamento dichiarata.
@@ -285,6 +334,7 @@ def interpreta_configurazione(grezza: Any, radice: Path) -> Configurazione:
         backoff_base_secondi=backoff_base,
         backoff_max_secondi=max(backoff_base, backoff_max),
         snapshot_gtfs_statico=bool(sezione.get("snapshot_gtfs_statico", True)),
+        soglia_interruzione_secondi=soglia_interruzione,
         cartella_rt=_cartella("cartella_rt", "data/raw/rt"),
         cartella_gtfs=_cartella("cartella_gtfs", "data/raw/gtfs"),
         cartella_log=_cartella("cartella_log", "logs"),
@@ -641,56 +691,186 @@ def scrivi_riga_manifest(percorso: Path, riga: dict[str, Any]) -> None:
 
 
 # =============================================================================
-# Snapshot dell'orario statico
+# Archiviazione dell'orario statico
 # =============================================================================
 
 
-def _impronta(dati: bytes) -> str:
-    return hashlib.sha256(dati).hexdigest()
+def _md5(dati: bytes) -> str:
+    """Impronta MD5 dell'archivio.
+
+    La scelta non e' crittografica ma di interoperabilita': MD5 e' l'impronta che
+    le agenzie pubblicano accanto allo zip (Roma Mobilita' espone un file .md5
+    affiancato all'archivio), e usare la stessa funzione permette di accorgersi
+    che l'orario e' cambiato scaricando cinquanta byte invece di decine di MB.
+    """
+    return hashlib.md5(dati).hexdigest()
 
 
-def forse_snapshot_gtfs(
+def interpreta_md5(dati: bytes) -> str | None:
+    """Estrae l'impronta da un file .md5 nel formato prodotto da ``md5sum``.
+
+    Il formato realmente pubblicato da Roma Mobilita', verificato scaricandolo,
+    e' ``e328ed0e82a9294dc6a20b7117200375  rsm/rome_static_gtfs.zip``: impronta,
+    spazi, percorso. Prendiamo il primo campo e lo accettiamo solo se e' davvero
+    esadecimale di 32 caratteri, perche' una pagina di errore restituita con
+    stato 200 supererebbe qualunque controllo piu' permissivo e ci convincerebbe
+    che l'orario e' cambiato tutti i giorni.
+    """
+    try:
+        testo = dati.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError:
+        return None
+    if not testo:
+        return None
+    primo = testo.split()[0].lower()
+    if len(primo) == 32 and all(carattere in "0123456789abcdef" for carattere in primo):
+        return primo
+    return None
+
+
+@dataclass(frozen=True)
+class EsitoOrarioStatico:
+    """Cosa e' successo al controllo giornaliero dell'orario statico."""
+
+    origine: str  # "scaricato" | "invariato" | "fallito"
+    md5: str | None
+    file: str | None
+
+
+def indice_vuoto(citta: str) -> dict[str, Any]:
+    """Struttura iniziale di index.json.
+
+    ``giorni`` mappa ogni data alla versione dell'orario valida quel giorno;
+    ``versioni`` raccoglie le revisioni distinte, cosi' una revisione che ritorna
+    identica non produce un secondo archivio.
+    """
+    return {"citta": citta, "aggiornato": None, "giorni": {}, "versioni": {}}
+
+
+def carica_indice(percorso: Path, citta: str) -> dict[str, Any]:
+    """Legge index.json, ripartendo da vuoto se e' illeggibile.
+
+    Un indice corrotto non deve impedire la raccolta del real-time, che e'
+    l'unico dato irripetibile: al peggio si riscarica l'orario statico, che e'
+    sempre recuperabile.
+    """
+    if not percorso.is_file():
+        return indice_vuoto(citta)
+    try:
+        indice = json.loads(percorso.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        log.warning("[%s] index.json illeggibile: ne creo uno nuovo.", citta)
+        return indice_vuoto(citta)
+    if not isinstance(indice, dict) or "giorni" not in indice:
+        return indice_vuoto(citta)
+    indice.setdefault("citta", citta)
+    indice.setdefault("versioni", {})
+    return indice
+
+
+def salva_indice(percorso: Path, indice: dict[str, Any]) -> None:
+    percorso.parent.mkdir(parents=True, exist_ok=True)
+    percorso.write_text(
+        json.dumps(indice, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+
+def versione_valida(indice: dict[str, Any], data_locale: str) -> dict[str, Any] | None:
+    """Versione dell'orario statico in vigore in una certa data di servizio.
+
+    Se per quella data non c'e' una voce esplicita (per esempio perche' il
+    collector era fermo), si ripiega sulla data precedente piu' vicina: l'orario
+    in vigore resta quello finche' l'agenzia non ne pubblica uno nuovo. E' la
+    funzione che la Fase 3 usera' per sapere con quale archivio interpretare i
+    ``trip_id`` di un certo giorno.
+    """
+    giorni = indice.get("giorni") or {}
+    if data_locale in giorni:
+        return giorni[data_locale]
+    precedenti = [data for data in giorni if data < data_locale]
+    if not precedenti:
+        return None
+    return giorni[max(precedenti)]
+
+
+def forse_archivia_orario(
     citta: ConfigCitta,
     raccolta: ConfigRaccolta,
     data_locale: str,
-) -> str | None:
-    """Archivia l'orario statico se non e' gia' stato controllato oggi.
+    momento_utc: datetime | None = None,
+) -> EsitoOrarioStatico | None:
+    """Controlla una volta al giorno l'orario statico e ne archivia le revisioni.
 
     Perche' questo controllo vive dentro il collector e non in uno script a
     parte: gli identificativi di corsa del feed real-time hanno senso solo
-    rispetto alla versione dell'orario statico in vigore quel giorno. Le agenzie
-    ripubblicano l'orario ogni poche settimane cambiando i ``trip_id``; se
-    scaricassimo il GTFS statico una volta sola a fine campagna, una parte dei
-    dump real-time gia' raccolti diventerebbe impossibile da interpretare e i
-    giorni corrispondenti andrebbero buttati.
+    rispetto alla versione dell'orario statico in vigore quel giorno. L'orario di
+    Roma cambia quasi ogni giorno e i ``trip_id`` non sono stabili nel tempo; se
+    scaricassimo il GTFS statico una volta sola a fine campagna, i dump gia'
+    raccolti diventerebbero impossibili da interpretare e l'intero dataset
+    sarebbe inutilizzabile in backtesting.
 
-    L'archivio viene conservato solo quando la sua impronta SHA-256 cambia: le
-    revisioni sono rare, quindi il costo su disco resta di pochi MB per revisione
-    invece che per giorno.
+    Il confronto passa dal file ``.md5`` quando l'agenzia lo pubblica: costa una
+    cinquantina di byte al giorno invece di decine di MB, e permette di
+    accorgersi che nulla e' cambiato senza scaricare nulla. Quando il ``.md5``
+    manca o non e' raggiungibile si ripiega sullo scaricamento dell'archivio e
+    sul confronto della sua impronta, che porta allo stesso risultato pagando
+    banda.
 
-    Lo stato del controllo sta in un file JSON e non in memoria proprio perche'
-    il processo puo' essere riavviato piu' volte al giorno: senza quel file
-    riscaricheremmo l'intero archivio a ogni riavvio.
+    Nei giorni senza modifiche non viene scritto un nuovo archivio ma solo un
+    marcatore in ``index.json`` che punta alla versione precedente: e' cio' che
+    permette alla Fase 3 di risalire, per ogni data, all'orario giusto.
     """
     if not raccolta.snapshot_gtfs_statico or not citta.url_gtfs_statico:
         return None
 
+    momento_utc = datetime.now(timezone.utc) if momento_utc is None else momento_utc
     cartella = raccolta.cartella_gtfs / citta.nome
     cartella.mkdir(parents=True, exist_ok=True)
-    percorso_stato = cartella / "_stato_snapshot.json"
+    percorso_indice = cartella / NOME_INDICE_GTFS
+    indice = carica_indice(percorso_indice, citta.nome)
 
-    stato: dict[str, Any] = {}
-    if percorso_stato.is_file():
-        try:
-            stato = json.loads(percorso_stato.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            log.warning("[%s] stato dello snapshot GTFS illeggibile: riparto da zero.", citta.nome)
-
-    if stato.get("ultima_data_controllo") == data_locale:
+    # Gia' controllato oggi: non ha senso ripetere il giro a ogni tick.
+    if data_locale in (indice.get("giorni") or {}):
         return None
 
-    log.info("[%s] controllo l'orario statico (%s).", citta.nome, data_locale)
     intestazioni = {"User-Agent": raccolta.user_agent, **citta.intestazioni_http}
+    precedente = versione_valida(indice, data_locale)
+    md5_dichiarato: str | None = None
+
+    if citta.url_gtfs_statico_md5:
+        esito_md5 = scarica(
+            citta.url_gtfs_statico_md5,
+            intestazioni,
+            raccolta.timeout_richiesta_secondi,
+            tentativi_max=2,
+            backoff_base=raccolta.backoff_base_secondi,
+            backoff_max=raccolta.backoff_max_secondi,
+        )
+        if esito_md5.ok and esito_md5.dati is not None:
+            md5_dichiarato = interpreta_md5(esito_md5.dati)
+            if md5_dichiarato is None:
+                log.warning(
+                    "[%s] il file .md5 non contiene un'impronta riconoscibile: "
+                    "ripiego sullo scaricamento dell'archivio.",
+                    citta.nome,
+                )
+        else:
+            log.warning(
+                "[%s] .md5 non raggiungibile (%s): ripiego sullo scaricamento dell'archivio.",
+                citta.nome,
+                esito_md5.dettaglio,
+            )
+
+    # Caso migliore: l'agenzia dichiara la stessa impronta di ieri, quindi non
+    # scarichiamo proprio nulla e registriamo solo il marcatore.
+    if md5_dichiarato and precedente and md5_dichiarato == precedente.get("md5"):
+        _registra_giorno(indice, data_locale, precedente["file"], md5_dichiarato, "invariato")
+        indice["aggiornato"] = momento_utc.isoformat(timespec="seconds")
+        salva_indice(percorso_indice, indice)
+        log.info("[%s] orario statico invariato (%s).", citta.nome, md5_dichiarato[:8])
+        return EsitoOrarioStatico("invariato", md5_dichiarato, precedente["file"])
+
+    log.info("[%s] scarico l'orario statico (%s).", citta.nome, data_locale)
     risultato = scarica(
         citta.url_gtfs_statico,
         intestazioni,
@@ -700,10 +880,10 @@ def forse_snapshot_gtfs(
         backoff_max=raccolta.backoff_max_secondi,
     )
     if not risultato.ok or risultato.dati is None:
-        # Lo stato non viene aggiornato: cosi' il tentativo si ripete al ciclo
+        # L'indice non viene toccato: cosi' il tentativo si ripete al ciclo
         # successivo invece di essere rimandato al giorno dopo.
         log.warning("[%s] orario statico non scaricato: %s", citta.nome, risultato.dettaglio)
-        return None
+        return EsitoOrarioStatico("fallito", None, None)
 
     if not risultato.dati.startswith(b"PK\x03\x04"):
         log.warning(
@@ -711,38 +891,127 @@ def forse_snapshot_gtfs(
             citta.nome,
             len(risultato.dati),
         )
-        return None
+        return EsitoOrarioStatico("fallito", None, None)
 
-    impronta = _impronta(risultato.dati)
-    percorso_archivio: str | None = stato.get("file")
-    if impronta != stato.get("sha256"):
-        nome_file = f"{data_locale}_{impronta[:8]}.zip"
-        destinazione = cartella / nome_file
-        destinazione.write_bytes(risultato.dati)
-        percorso_archivio = str(destinazione)
+    md5_reale = _md5(risultato.dati)
+    if md5_dichiarato and md5_dichiarato != md5_reale:
+        # Non e' necessariamente un errore: su un orario che cambia quasi ogni
+        # giorno, l'agenzia puo' aver ripubblicato l'archivio fra la lettura del
+        # .md5 e lo scaricamento. Fa fede l'impronta dei byte che abbiamo in mano.
         log.info(
-            "[%s] nuova revisione dell'orario statico archiviata: %s (%.1f MB).",
+            "[%s] il .md5 dichiarava %s ma l'archivio scaricato e' %s: "
+            "l'orario e' probabilmente cambiato durante lo scaricamento.",
+            citta.nome,
+            md5_dichiarato[:8],
+            md5_reale[:8],
+        )
+
+    versioni = indice.setdefault("versioni", {})
+    if md5_reale in versioni:
+        # Stessa revisione gia' archiviata (per esempio un rientro su una
+        # versione precedente): riusiamo il file invece di duplicarlo.
+        nome_file = versioni[md5_reale]["file"]
+        origine = "invariato"
+        log.info("[%s] orario statico gia' archiviato come %s.", citta.nome, nome_file)
+    else:
+        nome_file = f"{data_locale}.zip"
+        (cartella / nome_file).write_bytes(risultato.dati)
+        versioni[md5_reale] = {
+            "file": nome_file,
+            "prima_data": data_locale,
+            "byte": len(risultato.dati),
+        }
+        origine = "scaricato"
+        log.info(
+            "[%s] nuova revisione dell'orario statico archiviata: %s (%.1f MB, md5 %s).",
             citta.nome,
             nome_file,
             len(risultato.dati) / 1_048_576,
+            md5_reale[:8],
         )
-    else:
-        log.info("[%s] orario statico invariato (%s).", citta.nome, impronta[:8])
 
-    percorso_stato.write_text(
-        json.dumps(
-            {
-                "ultima_data_controllo": data_locale,
-                "sha256": impronta,
-                "file": percorso_archivio,
-                "byte": len(risultato.dati),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
+    _registra_giorno(indice, data_locale, nome_file, md5_reale, origine)
+    indice["aggiornato"] = momento_utc.isoformat(timespec="seconds")
+    salva_indice(percorso_indice, indice)
+    return EsitoOrarioStatico(origine, md5_reale, nome_file)
+
+
+def _registra_giorno(
+    indice: dict[str, Any], data_locale: str, file: str, md5: str, origine: str
+) -> None:
+    indice.setdefault("giorni", {})[data_locale] = {
+        "file": file,
+        "md5": md5,
+        "origine": origine,
+    }
+
+
+# =============================================================================
+# Registro delle interruzioni
+# =============================================================================
+
+
+def scrivi_gap(
+    percorso: Path,
+    citta: str,
+    inizio: datetime,
+    fine: datetime,
+    causa: str,
+    dettaglio: str = "",
+) -> None:
+    """Aggiunge una riga a gaps.jsonl per una finestra senza raccolta.
+
+    Serve a due cose che senza questo file sarebbero impossibili: escludere dal
+    backtesting le finestre in cui non abbiamo osservato nulla (altrimenti una
+    coincidenza "persa" potrebbe essere solo una coincidenza non osservata), e
+    dichiarare onestamente la copertura nella documentazione. Il formato e'
+    JSONL perche' e' append-only: una riga per volta, senza rileggere il file.
+    """
+    percorso.parent.mkdir(parents=True, exist_ok=True)
+    riga = {
+        "citta": citta,
+        "inizio": inizio.isoformat(timespec="seconds"),
+        "fine": fine.isoformat(timespec="seconds"),
+        "durata_secondi": round((fine - inizio).total_seconds()),
+        "causa": causa,
+        "dettaglio": dettaglio,
+    }
+    with percorso.open("a", encoding="utf-8") as flusso:
+        flusso.write(json.dumps(riga, ensure_ascii=False) + "\n")
+
+
+def leggi_battito(percorso: Path) -> datetime | None:
+    """Istante dell'ultima raccolta riuscita registrata dal processo precedente.
+
+    E' cio' che permette, al riavvio, di sapere da quando il collector non
+    raccoglieva e quindi di chiudere la finestra di interruzione con l'istante
+    giusto invece che con quello dell'avvio.
+    """
+    if not percorso.is_file():
+        return None
+    try:
+        dati = json.loads(percorso.read_text(encoding="utf-8"))
+        return datetime.fromisoformat(dati["ultimo_successo"])
+    except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError):
+        return None
+
+
+def scrivi_battito(percorso: Path, momento: datetime) -> None:
+    percorso.parent.mkdir(parents=True, exist_ok=True)
+    percorso.write_text(
+        json.dumps({"ultimo_successo": momento.isoformat(timespec="seconds")}, ensure_ascii=False),
         encoding="utf-8",
     )
-    return percorso_archivio
+
+
+def e_interruzione(inizio: datetime, fine: datetime, soglia_secondi: float) -> bool:
+    """Vero se la finestra e' abbastanza lunga da valere come interruzione.
+
+    La soglia esiste per non trasformare ogni singolo errore isolato in una
+    riga di gaps.jsonl: con un polling a 60 s, un tick perso e recuperato subito
+    non e' un buco nei dati, e' rumore.
+    """
+    return (fine - inizio).total_seconds() >= soglia_secondi
 
 
 # =============================================================================
@@ -789,6 +1058,11 @@ class StatoCitta:
     ultimo_timestamp_feed: dict[str, int | None] = field(default_factory=dict)
     contatori: Contatori = field(default_factory=Contatori)
     totali: Contatori = field(default_factory=Contatori)
+    # Istante dell'ultima raccolta riuscita e inizio della finestra di errori
+    # attualmente aperta: insieme bastano a ricostruire ogni interruzione senza
+    # tenere in memoria la storia completa.
+    ultimo_successo: datetime | None = None
+    interruzione_aperta: datetime | None = None
 
 
 def _registra(contatori: Iterable[Contatori], esito: str, byte: int) -> None:
@@ -806,6 +1080,62 @@ def _registra(contatori: Iterable[Contatori], esito: str, byte: int) -> None:
             singolo.errori_rete += 1
 
 
+def _aggiorna_interruzioni(
+    citta: ConfigCitta,
+    raccolta: ConfigRaccolta,
+    stato: StatoCitta,
+    esiti: Sequence[str],
+    momento_utc: datetime,
+) -> None:
+    """Apre e chiude le finestre di interruzione al termine di ogni giro.
+
+    Una finestra si considera aperta solo quando la distanza dall'ultima
+    raccolta riuscita supera la soglia configurata, e viene scritta su disco solo
+    quando si richiude, perche' prima di allora non se ne conosce la fine. Se il
+    processo muore mentre una finestra e' aperta, il battito su disco resta
+    fermo all'ultimo successo e sara' l'avvio successivo a registrarla: e' il
+    motivo per cui il battito viene aggiornato solo sui giri riusciti.
+
+    Un giro conta come riuscito se almeno un feed ha risposto, duplicato
+    compreso: un duplicato significa che il feed e' raggiungibile e sta
+    funzionando, solo che non e' cambiato.
+    """
+    percorso_gaps = raccolta.cartella_rt / citta.nome / NOME_GAPS
+    percorso_battito = raccolta.cartella_rt / citta.nome / NOME_BATTITO
+    riuscito = any(esito in (ESITO_SALVATO, ESITO_DUPLICATO) for esito in esiti)
+
+    if riuscito:
+        if stato.interruzione_aperta is not None:
+            scrivi_gap(
+                percorso_gaps,
+                citta.nome,
+                stato.interruzione_aperta,
+                momento_utc,
+                CAUSA_ERRORI_RETE,
+                "nessun feed raggiungibile per piu' della soglia configurata",
+            )
+            log.warning(
+                "[%s] interruzione chiusa: %.0f minuti senza raccolta.",
+                citta.nome,
+                (momento_utc - stato.interruzione_aperta).total_seconds() / 60,
+            )
+            stato.interruzione_aperta = None
+        stato.ultimo_successo = momento_utc
+        scrivi_battito(percorso_battito, momento_utc)
+        return
+
+    riferimento = stato.ultimo_successo
+    if riferimento is None or stato.interruzione_aperta is not None:
+        return
+    if e_interruzione(riferimento, momento_utc, raccolta.soglia_interruzione_secondi):
+        stato.interruzione_aperta = riferimento
+        log.warning(
+            "[%s] nessuna raccolta riuscita da %s: interruzione in corso.",
+            citta.nome,
+            riferimento.isoformat(timespec="seconds"),
+        )
+
+
 def raccogli_feed(
     citta: ConfigCitta,
     tipo_feed: str,
@@ -814,11 +1144,14 @@ def raccogli_feed(
     stato: StatoCitta,
     momento_utc: datetime,
     momento_locale: datetime,
-) -> None:
-    """Esegue una singola interrogazione e ne registra l'esito.
+) -> str:
+    """Esegue una singola interrogazione, ne registra l'esito e lo restituisce.
 
     Ogni cammino di uscita scrive una riga di manifest, compresi i fallimenti:
     e' cio' che rende calcolabile a posteriori la copertura della raccolta.
+    L'esito torna al chiamante perche' e' il ciclo, non la singola
+    interrogazione, a decidere se una serie di fallimenti costituisce
+    un'interruzione da registrare in gaps.jsonl.
     """
     cartella_giorno = raccolta.cartella_rt / citta.nome / momento_locale.strftime("%Y-%m-%d")
     percorso_manifest = cartella_giorno / "_manifest.csv"
@@ -847,7 +1180,7 @@ def raccogli_feed(
         _registra((stato.contatori, stato.totali), risultato.esito, 0)
         scrivi_riga_manifest(percorso_manifest, riga)
         log.warning("[%s/%s] %s", citta.nome, tipo_feed, risultato.dettaglio)
-        return
+        return risultato.esito
 
     dati = risultato.dati
     riga["byte"] = len(dati)
@@ -868,7 +1201,7 @@ def raccogli_feed(
         _registra((stato.contatori, stato.totali), ESITO_NON_VALIDO, 0)
         scrivi_riga_manifest(percorso_manifest, riga)
         log.warning("[%s/%s] payload non valido: %s", citta.nome, tipo_feed, errore)
-        return
+        return ESITO_NON_VALIDO
 
     riga["timestamp_feed"] = riepilogo.timestamp_feed
     riga["n_entita"] = riepilogo.n_entita
@@ -879,7 +1212,7 @@ def raccogli_feed(
         riga["dettaglio"] = "header.timestamp invariato"
         _registra((stato.contatori, stato.totali), ESITO_DUPLICATO, 0)
         scrivi_riga_manifest(percorso_manifest, riga)
-        return
+        return ESITO_DUPLICATO
 
     destinazione = percorso_dump(raccolta.cartella_rt, citta.nome, tipo_feed, momento_locale)
     destinazione.parent.mkdir(parents=True, exist_ok=True)
@@ -897,6 +1230,7 @@ def raccogli_feed(
         riepilogo.n_entita,
         len(dati),
     )
+    return ESITO_SALVATO
 
 
 def riga_riepilogo(nome: str, contatori: Contatori, etichetta: str) -> str:
@@ -959,12 +1293,60 @@ def esegui(
     raccolta = config.raccolta
     stati = {c.nome: StatoCitta() for c in attive}
     interruttore = _Interruttore()
+    avvio_utc = datetime.now(timezone.utc)
 
     log.info(
         "Avvio della raccolta: %s | intervallo %d s.",
         "; ".join(f"{c.nome} [{', '.join(sorted(c.feed_rt))}]" for c in attive),
         raccolta.intervallo_polling_secondi,
     )
+
+    for citta in attive:
+        if citta.indirizzi_in_chiaro:
+            log.warning(
+                "[%s] %d indirizzi serviti in HTTP e non in HTTPS: %s. "
+                "Il traffico e' leggibile e alterabile lungo il percorso; "
+                "nessuna credenziale viene inviata su questi indirizzi.",
+                citta.nome,
+                len(citta.indirizzi_in_chiaro),
+                ", ".join(citta.indirizzi_in_chiaro),
+            )
+        if not citta.url_gtfs_statico:
+            log.warning(
+                "[%s] MANCA l'orario statico: i dump real-time vengono raccolti ma NON "
+                "saranno interpretabili in Fase 3, perche' non si potra' risalire agli "
+                "orari programmati. Compilare 'url_gtfs_statico' in config.yaml.",
+                citta.nome,
+            )
+
+        # Un riavvio lascia una finestra scoperta fra l'ultima raccolta riuscita
+        # del processo precedente e questo avvio: va registrata adesso, perche'
+        # nessun altro momento ha entrambi gli estremi.
+        percorso_battito = raccolta.cartella_rt / citta.nome / NOME_BATTITO
+        ultimo = leggi_battito(percorso_battito)
+        if ultimo is None:
+            log.info("[%s] prima esecuzione: nessuna interruzione pregressa da registrare.", citta.nome)
+        elif e_interruzione(ultimo, avvio_utc, raccolta.soglia_interruzione_secondi):
+            scrivi_gap(
+                raccolta.cartella_rt / citta.nome / NOME_GAPS,
+                citta.nome,
+                ultimo,
+                avvio_utc,
+                CAUSA_PROCESSO_FERMO,
+                "finestra fra l'ultima raccolta riuscita e il riavvio del collector",
+            )
+            log.warning(
+                "[%s] interruzione registrata: %s -> %s (%.0f minuti senza raccolta).",
+                citta.nome,
+                ultimo.isoformat(timespec="seconds"),
+                avvio_utc.isoformat(timespec="seconds"),
+                (avvio_utc - ultimo).total_seconds() / 60,
+            )
+            # La finestra pregressa e' gia' stata registrata: il riferimento per
+            # le interruzioni successive riparte da adesso, altrimenti la
+            # prossima verrebbe scritta sovrapposta a questa.
+            ultimo = avvio_utc
+        stati[citta.nome].ultimo_successo = ultimo if ultimo is not None else avvio_utc
 
     prossimo_tick = time.monotonic()
     ora_riepilogo = datetime.now(timezone.utc).hour
@@ -979,23 +1361,32 @@ def esegui(
             momento_locale = momento_utc.astimezone(fuso)
             stato = stati[citta.nome]
             try:
-                forse_snapshot_gtfs(citta, raccolta, momento_locale.strftime("%Y-%m-%d"))
+                forse_archivia_orario(
+                    citta, raccolta, momento_locale.strftime("%Y-%m-%d"), momento_utc
+                )
             except Exception:
-                # Lo snapshot dell'orario e' importante ma non deve mai impedire
-                # la raccolta del real-time, che e' l'unico dato irripetibile.
-                log.exception("[%s] errore imprevisto nello snapshot dell'orario.", citta.nome)
+                # L'archiviazione dell'orario e' importante ma non deve mai
+                # impedire la raccolta del real-time, che e' l'unico dato
+                # irripetibile.
+                log.exception("[%s] errore imprevisto nell'archiviazione dell'orario.", citta.nome)
 
+            esiti: list[str] = []
             for tipo_feed, url in sorted(citta.feed_rt.items()):
                 try:
-                    raccogli_feed(
-                        citta, tipo_feed, url, raccolta, stato, momento_utc, momento_locale
+                    esiti.append(
+                        raccogli_feed(
+                            citta, tipo_feed, url, raccolta, stato, momento_utc, momento_locale
+                        )
                     )
                 except Exception:
                     # Ultima rete di sicurezza: nemmeno un bug nostro deve poter
                     # fermare una raccolta che deve durare settimane.
                     stato.contatori.errori_rete += 1
                     stato.totali.errori_rete += 1
+                    esiti.append(ESITO_ERRORE_RETE)
                     log.exception("[%s/%s] errore imprevisto.", citta.nome, tipo_feed)
+
+            _aggiorna_interruzioni(citta, raccolta, stato, esiti, momento_utc)
 
         ora_corrente = datetime.now(timezone.utc).hour
         if ora_corrente != ora_riepilogo:
@@ -1231,8 +1622,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         for citta in config.citta:
             stato = "attiva" if citta.attiva else "disattivata"
             feed = ", ".join(sorted(citta.feed_rt)) or "nessun feed"
-            statico = "con orario statico" if citta.url_gtfs_statico else "SENZA orario statico"
-            print(f"  - {citta.nome} ({stato}, {citta.fuso_orario}): {feed}; {statico}")
+            print(f"  - {citta.nome} ({stato}, {citta.fuso_orario}): {feed}")
+            if citta.url_gtfs_statico:
+                con_md5 = " con .md5" if citta.url_gtfs_statico_md5 else " senza .md5 (si scarica l'archivio ogni giorno)"
+                print(f"      orario statico:{con_md5}")
+            else:
+                print(
+                    "      ATTENZIONE: manca l'orario statico. I dump real-time verranno "
+                    "raccolti\n"
+                    "      ma NON saranno interpretabili in Fase 3, perche' non si potra' "
+                    "risalire\n"
+                    "      agli orari programmati."
+                )
+            if citta.indirizzi_in_chiaro:
+                print(
+                    f"      ATTENZIONE: {len(citta.indirizzi_in_chiaro)} indirizzi in HTTP "
+                    "(non cifrati):"
+                )
+                for indirizzo in citta.indirizzi_in_chiaro:
+                    print(f"        {indirizzo}")
         return 0
 
     if argomenti.diagnostica_citta:

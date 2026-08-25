@@ -1,0 +1,102 @@
+# =============================================================================
+# Configurazione del progetto - pianificatore robusto su trasporto pubblico
+# =============================================================================
+#
+# ISTRUZIONI PER IL PRIMO AVVIO
+# -----------------------------
+# Tutti i valori che iniziano con "INSERIRE_QUI_" sono segnaposto. Il collector
+# si RIFIUTA di partire finche' ne trova anche uno solo fra i feed obbligatori:
+# e' una scelta deliberata, perche' l'errore piu' costoso in questo progetto e'
+# accorgersi dopo tre giorni di non aver raccolto nulla.
+#
+# Per ogni citta' servono due indirizzi:
+#
+#   1) url_gtfs_statico
+#      Un file .zip con l'orario ufficiale (stops.txt, trips.txt, stop_times.txt,
+#      calendar.txt, ...). Sulle pagine open data compare come "GTFS", "GTFS
+#      statico", "orario programmato" o "static schedule".
+#
+#   2) feed_rt.trip_updates                              <-- IL PIU' IMPORTANTE
+#      Un endpoint che restituisce un protobuf GTFS Real-Time con entita' di tipo
+#      TripUpdate. E' l'unica fonte dei RITARDI: senza questo il progetto non ha
+#      dati e non e' realizzabile. Sulle pagine open data compare come
+#      "GTFS-RT TripUpdates", "trip updates", "aggiornamenti corse".
+#      ATTENZIONE: molte agenzie pubblicano solo le posizioni dei veicoli. Prima
+#      di impegnare settimane di raccolta, verificate con:
+#          python -m src.collector.poll_realtime --diagnostica <url>
+#      che il feed contenga davvero stop_time_update con ritardi.
+#
+#   3) feed_rt.vehicle_positions                                  (facoltativo)
+#      Posizioni dei veicoli. Non contiene ritardi in forma diretta, ma e' la
+#      rete di sicurezza: se i trip_updates si rivelassero poveri o intermittenti
+#      i passaggi si possono ricostruire dalle posizioni. Non e' recuperabile a
+#      posteriori, quindi conviene raccoglierlo fin dall'inizio.
+#      Se una citta' non lo espone, mettere: vehicle_positions: null
+#
+# Dove cercare gli indirizzi: catalogo Mobility Database, Transit.land, la
+# sezione "open data" del sito dell'azienda di trasporto, i portali open data
+# comunali e regionali.
+#
+# =============================================================================
+
+raccolta:
+  # 60 s e' il compromesso fra risoluzione temporale e volume su disco. La maggior
+  # parte delle agenzie rigenera il feed ogni 30-120 s: interrogare piu' spesso
+  # produrrebbe soprattutto duplicati, che vengono comunque scartati dalla
+  # deduplica basata su header.timestamp.
+  intervallo_polling_secondi: 60
+
+  # Deve restare ampiamente sotto l'intervallo di polling: un feed lento non deve
+  # mai far slittare il tick successivo.
+  timeout_richiesta_secondi: 20
+
+  # L'archivio GTFS statico puo' pesare decine di MB, quindi ha un timeout suo.
+  timeout_gtfs_statico_secondi: 300
+
+  # Ritentare troppo a lungo e' inutile: se il feed non risponde entro pochi
+  # secondi, il tick successivo arriva comunque fra un minuto.
+  tentativi_max: 3
+  backoff_base_secondi: 2.0
+  backoff_max_secondi: 20.0
+
+  # Scarica l'orario statico una volta al giorno e lo archivia solo se il suo
+  # SHA-256 e' cambiato. Serve a mantenere joinabili i dump real-time: gli
+  # identificativi di corsa hanno senso solo rispetto alla versione dell'orario
+  # in vigore quel giorno.
+  snapshot_gtfs_statico: true
+
+  cartella_rt: data/raw/rt
+  cartella_gtfs: data/raw/gtfs
+  cartella_log: logs
+
+  # Alcuni server rifiutano lo user agent predefinito di urllib. Dichiararsi in
+  # modo onesto e riconoscibile e' anche una cortesia verso chi gestisce il feed.
+  user_agent: "progetto-icon-tpl/0.1 (raccolta dati per progetto universitario)"
+
+citta:
+  # -------------------------------------------------------------------------
+  # Rinominare "citta_a" con il nome reale (minuscolo, senza spazi: diventa un
+  # nome di cartella sotto data/raw/rt/).
+  # -------------------------------------------------------------------------
+  - nome: citta_a
+    attiva: true
+    # Fuso orario IANA dell'azienda di trasporto. Determina la data di servizio
+    # usata per raggruppare i dump in cartelle giornaliere.
+    fuso_orario: Europe/Rome
+    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_CITTA_A
+    feed_rt:
+      trip_updates: INSERIRE_QUI_URL_TRIP_UPDATES_CITTA_A
+      vehicle_positions: INSERIRE_QUI_URL_VEHICLE_POSITIONS_CITTA_A
+    # Solo se l'agenzia richiede una chiave. Esempio:
+    #   intestazioni_http:
+    #     Authorization: "Bearer xxxxxxxx"
+    intestazioni_http: {}
+
+  - nome: citta_b
+    attiva: true
+    fuso_orario: Europe/Rome
+    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_CITTA_B
+    feed_rt:
+      trip_updates: INSERIRE_QUI_URL_TRIP_UPDATES_CITTA_B
+      vehicle_positions: INSERIRE_QUI_URL_VEHICLE_POSITIONS_CITTA_B
+    intestazioni_http: {}

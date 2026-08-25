@@ -1,0 +1,38 @@
+# --- Dati grezzi e derivati ---------------------------------------------------
+# I dump del feed real-time crescono di ~1440 file al giorno per citta': fuori da git.
+# Le sottocartelle vuote restano tracciate tramite .gitkeep, cosi' chi clona il
+# repository ottiene la struttura corretta senza doverla ricreare a mano.
+data/raw/*
+!data/raw/rt/
+!data/raw/gtfs/
+data/raw/rt/*
+!data/raw/rt/.gitkeep
+data/raw/gtfs/*
+!data/raw/gtfs/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# --- Log ----------------------------------------------------------------------
+logs/*
+!logs/.gitkeep
+
+# --- Ambiente Python ----------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Editor e sistema operativo ------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# NOTA: results/ NON e' ignorato di proposito. I CSV e i grafici degli esperimenti
+# sono il deliverable valutato del progetto, non artefatti rigenerabili a piacere:
+# devono essere versionati insieme al codice che li ha prodotti.

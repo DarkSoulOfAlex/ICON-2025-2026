@@ -10,9 +10,10 @@ non hanno nulla a che vedere con il codice.
 from __future__ import annotations
 
 import csv
+import json
 import threading
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -58,6 +59,7 @@ def config_minima(radice: Path, url: str, url_secondario: str | None = None) -> 
         "attiva": True,
         "fuso_orario": "Europe/Rome",
         "url_gtfs_statico": None,
+        "url_gtfs_statico_md5": None,
         "feed_rt": {"trip_updates": url, "vehicle_positions": url_secondario},
         "intestazioni_http": {},
     }
@@ -448,7 +450,7 @@ def test_la_copertura_di_zero_interrogazioni_non_divide_per_zero() -> None:
 
 
 # =============================================================================
-# Snapshot dell'orario statico
+# Archiviazione dell'orario statico
 # =============================================================================
 
 
@@ -457,12 +459,15 @@ def _zip_finto(contenuto: bytes) -> bytes:
     return b"PK\x03\x04" + contenuto
 
 
-def _config_snapshot(tmp_path: Path) -> tuple[pr.ConfigCitta, pr.ConfigRaccolta]:
+def _config_orario(
+    tmp_path: Path, con_md5: bool = True
+) -> tuple[pr.ConfigCitta, pr.ConfigRaccolta]:
     citta = pr.ConfigCitta(
         nome="prova",
         attiva=True,
         fuso_orario="Europe/Rome",
         url_gtfs_statico="https://esempio.invalid/gtfs.zip",
+        url_gtfs_statico_md5="https://esempio.invalid/gtfs.zip.md5" if con_md5 else None,
         feed_rt={},
         intestazioni_http={},
     )
@@ -474,6 +479,7 @@ def _config_snapshot(tmp_path: Path) -> tuple[pr.ConfigCitta, pr.ConfigRaccolta]
         backoff_base_secondi=1.0,
         backoff_max_secondi=2.0,
         snapshot_gtfs_statico=True,
+        soglia_interruzione_secondi=300.0,
         cartella_rt=tmp_path / "rt",
         cartella_gtfs=tmp_path / "gtfs",
         cartella_log=tmp_path / "logs",
@@ -482,87 +488,360 @@ def _config_snapshot(tmp_path: Path) -> tuple[pr.ConfigCitta, pr.ConfigRaccolta]
     return citta, raccolta
 
 
-def test_lo_snapshot_archivia_la_prima_revisione(tmp_path: Path, monkeypatch) -> None:
-    citta, raccolta = _config_snapshot(tmp_path)
-    monkeypatch.setattr(
-        pr, "scarica",
-        lambda *a, **k: pr.RisultatoDownload(True, _zip_finto(b"v1"), 200, 1, pr.ESITO_SALVATO, ""),
+def _finto_server(archivio: bytes, md5_dichiarato: str | None, registro: list[str]):
+    """Sostituto di ``scarica`` che risponde in base all'indirizzo richiesto.
+
+    Il registro delle chiamate serve a verificare la proprieta' piu' importante
+    dell'archiviazione: nei giorni senza modifiche l'archivio NON deve essere
+    scaricato affatto.
+    """
+
+    def finto(url: str, *_a: object, **_k: object) -> pr.RisultatoDownload:
+        registro.append(url)
+        if url.endswith(".md5"):
+            if md5_dichiarato is None:
+                return pr.RisultatoDownload(False, None, 404, 1, pr.ESITO_ERRORE_HTTP, "HTTP 404")
+            corpo = f"{md5_dichiarato}  rsm/gtfs.zip\n".encode("ascii")
+            return pr.RisultatoDownload(True, corpo, 200, 1, pr.ESITO_SALVATO, "")
+        return pr.RisultatoDownload(True, archivio, 200, 1, pr.ESITO_SALVATO, "")
+
+    return finto
+
+
+def test_interpreta_il_formato_md5_reale_di_roma() -> None:
+    """Il formato e' quello verificato scaricandolo davvero da Roma Mobilita'."""
+    grezzo = b"e328ed0e82a9294dc6a20b7117200375  rsm/rome_static_gtfs.zip\n"
+    assert pr.interpreta_md5(grezzo) == "e328ed0e82a9294dc6a20b7117200375"
+
+
+def test_interpreta_anche_un_md5_nudo() -> None:
+    assert pr.interpreta_md5(b"E328ED0E82A9294DC6A20B7117200375\n") == (
+        "e328ed0e82a9294dc6a20b7117200375"
     )
-    percorso = pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    assert percorso is not None
-    archivi = sorted((tmp_path / "gtfs" / "prova").glob("*.zip"))
-    assert len(archivi) == 1
-    assert archivi[0].name.startswith("2026-08-24_")
 
 
-def test_lo_snapshot_non_riscarica_due_volte_nello_stesso_giorno(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Senza questo controllo un riavvio orario riscaricherebbe decine di MB."""
-    citta, raccolta = _config_snapshot(tmp_path)
-    chiamate = []
-
-    def finto(*_a: object, **_k: object) -> pr.RisultatoDownload:
-        chiamate.append(1)
-        return pr.RisultatoDownload(True, _zip_finto(b"v1"), 200, 1, pr.ESITO_SALVATO, "")
-
-    monkeypatch.setattr(pr, "scarica", finto)
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    assert len(chiamate) == 1
+@pytest.mark.parametrize(
+    "grezzo",
+    [
+        b"",
+        b"<html>404 not found</html>",
+        b"non-esadecimale-ma-lungo-32-caratt",
+        b"abc123",
+        "e328ed0e82a9294dc6a20b7117200375è".encode("utf-8"),
+    ],
+)
+def test_un_md5_non_riconoscibile_non_viene_accettato(grezzo: bytes) -> None:
+    """Una pagina di errore servita con stato 200 non deve passare per un'impronta."""
+    assert pr.interpreta_md5(grezzo) is None
 
 
-def test_un_orario_invariato_non_produce_un_nuovo_archivio(tmp_path: Path, monkeypatch) -> None:
-    citta, raccolta = _config_snapshot(tmp_path)
-    monkeypatch.setattr(
-        pr, "scarica",
-        lambda *a, **k: pr.RisultatoDownload(True, _zip_finto(b"v1"), 200, 1, pr.ESITO_SALVATO, ""),
-    )
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-25")
+def test_la_prima_revisione_viene_archiviata_col_nome_del_giorno(tmp_path: Path, monkeypatch) -> None:
+    citta, raccolta = _config_orario(tmp_path)
+    archivio = _zip_finto(b"v1")
+    monkeypatch.setattr(pr, "scarica", _finto_server(archivio, pr._md5(archivio), []))
+
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+
+    assert esito is not None and esito.origine == "scaricato"
+    assert (tmp_path / "gtfs" / "prova" / "2026-08-25.zip").read_bytes() == archivio
+    indice = json.loads((tmp_path / "gtfs" / "prova" / "index.json").read_text(encoding="utf-8"))
+    assert indice["giorni"]["2026-08-25"]["file"] == "2026-08-25.zip"
+    assert indice["giorni"]["2026-08-25"]["md5"] == pr._md5(archivio)
+
+
+def test_nello_stesso_giorno_non_si_ricontrolla(tmp_path: Path, monkeypatch) -> None:
+    """Senza questo, un riavvio orario riscaricherebbe decine di MB ogni volta."""
+    citta, raccolta = _config_orario(tmp_path)
+    archivio = _zip_finto(b"v1")
+    registro: list[str] = []
+    monkeypatch.setattr(pr, "scarica", _finto_server(archivio, pr._md5(archivio), registro))
+
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    quante = len(registro)
+    assert pr.forse_archivia_orario(citta, raccolta, "2026-08-25") is None
+    assert len(registro) == quante
+
+
+def test_se_il_md5_e_invariato_l_archivio_non_viene_scaricato(tmp_path: Path, monkeypatch) -> None:
+    """E' la ragione d'essere del .md5: cinquanta byte invece di decine di MB."""
+    citta, raccolta = _config_orario(tmp_path)
+    archivio = _zip_finto(b"v1")
+    registro: list[str] = []
+    monkeypatch.setattr(pr, "scarica", _finto_server(archivio, pr._md5(archivio), registro))
+
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    registro.clear()
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-26")
+
+    assert esito is not None and esito.origine == "invariato"
+    assert registro == ["https://esempio.invalid/gtfs.zip.md5"], "lo zip non doveva essere scaricato"
+    # Il giorno senza modifiche ha comunque un marcatore che punta alla versione
+    # precedente: e' cio' che rende interpretabili i dump di quel giorno.
+    indice = json.loads((tmp_path / "gtfs" / "prova" / "index.json").read_text(encoding="utf-8"))
+    assert indice["giorni"]["2026-08-26"]["file"] == "2026-08-25.zip"
     assert len(list((tmp_path / "gtfs" / "prova").glob("*.zip"))) == 1
 
 
-def test_una_nuova_revisione_dell_orario_viene_archiviata(tmp_path: Path, monkeypatch) -> None:
-    """E' il caso che rende interpretabili i dump gia' raccolti."""
-    citta, raccolta = _config_snapshot(tmp_path)
-    versione = [b"v1"]
-    monkeypatch.setattr(
-        pr, "scarica",
-        lambda *a, **k: pr.RisultatoDownload(
-            True, _zip_finto(versione[0]), 200, 1, pr.ESITO_SALVATO, ""
-        ),
-    )
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    versione[0] = b"v2-orario-cambiato"
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-25")
-    archivi = sorted((tmp_path / "gtfs" / "prova").glob("*.zip"))
-    assert len(archivi) == 2
+def test_un_md5_diverso_produce_un_nuovo_archivio(tmp_path: Path, monkeypatch) -> None:
+    """E' il caso che tiene interpretabili i dump gia' raccolti."""
+    citta, raccolta = _config_orario(tmp_path)
+    primo = _zip_finto(b"v1")
+    monkeypatch.setattr(pr, "scarica", _finto_server(primo, pr._md5(primo), []))
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+
+    secondo = _zip_finto(b"v2-orario-cambiato")
+    monkeypatch.setattr(pr, "scarica", _finto_server(secondo, pr._md5(secondo), []))
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-26")
+
+    assert esito is not None and esito.origine == "scaricato"
+    assert sorted(p.name for p in (tmp_path / "gtfs" / "prova").glob("*.zip")) == [
+        "2026-08-25.zip",
+        "2026-08-26.zip",
+    ]
+    indice = json.loads((tmp_path / "gtfs" / "prova" / "index.json").read_text(encoding="utf-8"))
+    assert indice["giorni"]["2026-08-25"]["file"] == "2026-08-25.zip"
+    assert indice["giorni"]["2026-08-26"]["file"] == "2026-08-26.zip"
 
 
-def test_un_orario_che_non_e_uno_zip_viene_rifiutato(tmp_path: Path, monkeypatch) -> None:
-    citta, raccolta = _config_snapshot(tmp_path)
-    monkeypatch.setattr(
-        pr, "scarica",
-        lambda *a, **k: pr.RisultatoDownload(
-            True, b"<html>login</html>", 200, 1, pr.ESITO_SALVATO, ""
-        ),
-    )
-    assert pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24") is None
+def test_senza_md5_si_ripiega_sullo_scaricamento(tmp_path: Path, monkeypatch) -> None:
+    """Torino non pubblica il .md5: il confronto deve funzionare lo stesso."""
+    citta, raccolta = _config_orario(tmp_path, con_md5=False)
+    archivio = _zip_finto(b"v1")
+    registro: list[str] = []
+    monkeypatch.setattr(pr, "scarica", _finto_server(archivio, None, registro))
+
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    registro.clear()
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-26")
+
+    assert esito is not None and esito.origine == "invariato"
+    assert registro == ["https://esempio.invalid/gtfs.zip"], "senza .md5 si scarica l'archivio"
+    assert len(list((tmp_path / "gtfs" / "prova").glob("*.zip"))) == 1
+
+
+def test_un_md5_irraggiungibile_non_blocca_l_archiviazione(tmp_path: Path, monkeypatch) -> None:
+    citta, raccolta = _config_orario(tmp_path)
+    archivio = _zip_finto(b"v1")
+    monkeypatch.setattr(pr, "scarica", _finto_server(archivio, None, []))
+
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    assert esito is not None and esito.origine == "scaricato"
+
+
+def test_una_revisione_gia_nota_non_viene_duplicata(tmp_path: Path, monkeypatch) -> None:
+    """Se l'agenzia torna a una versione precedente, si riusa l'archivio esistente."""
+    citta, raccolta = _config_orario(tmp_path, con_md5=False)
+    primo = _zip_finto(b"v1")
+    secondo = _zip_finto(b"v2")
+
+    monkeypatch.setattr(pr, "scarica", _finto_server(primo, None, []))
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    monkeypatch.setattr(pr, "scarica", _finto_server(secondo, None, []))
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-26")
+    monkeypatch.setattr(pr, "scarica", _finto_server(primo, None, []))
+    pr.forse_archivia_orario(citta, raccolta, "2026-08-27")
+
+    archivi = sorted(p.name for p in (tmp_path / "gtfs" / "prova").glob("*.zip"))
+    assert archivi == ["2026-08-25.zip", "2026-08-26.zip"]
+    indice = json.loads((tmp_path / "gtfs" / "prova" / "index.json").read_text(encoding="utf-8"))
+    assert indice["giorni"]["2026-08-27"]["file"] == "2026-08-25.zip"
+
+
+def test_un_archivio_che_non_e_uno_zip_viene_rifiutato(tmp_path: Path, monkeypatch) -> None:
+    citta, raccolta = _config_orario(tmp_path, con_md5=False)
+    monkeypatch.setattr(pr, "scarica", _finto_server(b"<html>login</html>", None, []))
+
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+    assert esito is not None and esito.origine == "fallito"
     assert not list((tmp_path / "gtfs" / "prova").glob("*.zip"))
 
 
-def test_uno_scaricamento_fallito_verra_ritentato_al_giro_dopo(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Lo stato non va aggiornato in caso di errore, o si perderebbe il giorno."""
-    citta, raccolta = _config_snapshot(tmp_path)
+def test_uno_scaricamento_fallito_verra_ritentato_al_giro_dopo(tmp_path: Path, monkeypatch) -> None:
+    """L'indice non va aggiornato in caso di errore, o si perderebbe il giorno."""
+    citta, raccolta = _config_orario(tmp_path, con_md5=False)
     monkeypatch.setattr(
-        pr, "scarica",
-        lambda *a, **k: pr.RisultatoDownload(False, None, 503, 2, pr.ESITO_ERRORE_HTTP, "HTTP 503"),
+        pr,
+        "scarica",
+        lambda *a, **k: pr.RisultatoDownload(False, None, 503, 1, pr.ESITO_ERRORE_HTTP, "HTTP 503"),
     )
-    pr.forse_snapshot_gtfs(citta, raccolta, "2026-08-24")
-    assert not (tmp_path / "gtfs" / "prova" / "_stato_snapshot.json").exists()
+    esito = pr.forse_archivia_orario(citta, raccolta, "2026-08-25")
+
+    assert esito is not None and esito.origine == "fallito"
+    percorso_indice = tmp_path / "gtfs" / "prova" / "index.json"
+    assert not percorso_indice.exists() or "2026-08-25" not in json.loads(
+        percorso_indice.read_text(encoding="utf-8")
+    )["giorni"]
+
+
+# =============================================================================
+# index.json letto dal lato della Fase 3
+# =============================================================================
+
+
+def test_la_versione_valida_e_quella_del_giorno_stesso() -> None:
+    indice = {"giorni": {"2026-08-25": {"file": "a.zip"}, "2026-08-26": {"file": "b.zip"}}}
+    assert pr.versione_valida(indice, "2026-08-26")["file"] == "b.zip"
+
+
+def test_senza_voce_esplicita_vale_l_ultima_precedente() -> None:
+    """Se il collector era fermo, l'orario in vigore resta quello dell'ultima revisione."""
+    indice = {"giorni": {"2026-08-20": {"file": "a.zip"}, "2026-08-26": {"file": "b.zip"}}}
+    assert pr.versione_valida(indice, "2026-08-23")["file"] == "a.zip"
+
+
+def test_prima_della_prima_revisione_non_c_e_nulla() -> None:
+    indice = {"giorni": {"2026-08-20": {"file": "a.zip"}}}
+    assert pr.versione_valida(indice, "2026-08-19") is None
+
+
+# =============================================================================
+# Registro delle interruzioni
+# =============================================================================
+
+
+def _istante(ora: int, minuto: int = 0) -> datetime:
+    return datetime(2026, 8, 25, ora, minuto, tzinfo=timezone.utc)
+
+
+def test_una_finestra_breve_non_e_un_interruzione() -> None:
+    """Un tick perso e recuperato subito non e' un buco nei dati, e' rumore."""
+    assert not pr.e_interruzione(_istante(8, 0), _istante(8, 2), 300)
+
+
+def test_una_finestra_oltre_la_soglia_e_un_interruzione() -> None:
+    assert pr.e_interruzione(_istante(8, 0), _istante(8, 30), 300)
+
+
+def test_il_gap_viene_scritto_in_jsonl_rileggibile(tmp_path: Path) -> None:
+    percorso = tmp_path / "gaps.jsonl"
+    pr.scrivi_gap(percorso, "roma", _istante(2, 0), _istante(8, 0), pr.CAUSA_PROCESSO_FERMO, "prova")
+    pr.scrivi_gap(percorso, "roma", _istante(9, 0), _istante(9, 30), pr.CAUSA_ERRORI_RETE)
+
+    righe = [json.loads(r) for r in percorso.read_text(encoding="utf-8").splitlines()]
+    assert len(righe) == 2
+    assert righe[0]["durata_secondi"] == 6 * 3600
+    assert righe[0]["causa"] == pr.CAUSA_PROCESSO_FERMO
+    assert righe[1]["citta"] == "roma"
+
+
+def test_il_battito_sopravvive_al_riavvio(tmp_path: Path) -> None:
+    percorso = tmp_path / "_battito.json"
+    pr.scrivi_battito(percorso, _istante(8, 0))
+    assert pr.leggi_battito(percorso) == _istante(8, 0)
+
+
+@pytest.mark.parametrize("contenuto", ["", "{}", "non json", '{"ultimo_successo": "boh"}'])
+def test_un_battito_illeggibile_non_fa_esplodere_nulla(tmp_path: Path, contenuto: str) -> None:
+    percorso = tmp_path / "_battito.json"
+    percorso.write_text(contenuto, encoding="utf-8")
+    assert pr.leggi_battito(percorso) is None
+
+
+def test_un_giro_riuscito_aggiorna_il_battito(tmp_path: Path) -> None:
+    citta, raccolta = _config_orario(tmp_path)
+    stato = pr.StatoCitta(ultimo_successo=_istante(8, 0))
+    pr._aggiorna_interruzioni(citta, raccolta, stato, [pr.ESITO_SALVATO], _istante(8, 1))
+
+    assert stato.ultimo_successo == _istante(8, 1)
+    assert pr.leggi_battito(tmp_path / "rt" / "prova" / pr.NOME_BATTITO) == _istante(8, 1)
+
+
+def test_un_duplicato_conta_come_giro_riuscito(tmp_path: Path) -> None:
+    """Il feed ha risposto: non e' un'interruzione della raccolta."""
+    citta, raccolta = _config_orario(tmp_path)
+    stato = pr.StatoCitta(ultimo_successo=_istante(8, 0))
+    pr._aggiorna_interruzioni(citta, raccolta, stato, [pr.ESITO_DUPLICATO], _istante(8, 1))
+    assert stato.ultimo_successo == _istante(8, 1)
+
+
+def test_gli_errori_prolungati_aprono_e_chiudono_una_interruzione(tmp_path: Path) -> None:
+    citta, raccolta = _config_orario(tmp_path)
+    stato = pr.StatoCitta(ultimo_successo=_istante(8, 0))
+
+    # Un solo giro fallito subito dopo un successo non apre nulla.
+    pr._aggiorna_interruzioni(citta, raccolta, stato, [pr.ESITO_ERRORE_RETE], _istante(8, 1))
+    assert stato.interruzione_aperta is None
+
+    # Superata la soglia, la finestra si apre e parte dall'ULTIMO SUCCESSO, non
+    # dal momento in cui ce ne siamo accorti.
+    pr._aggiorna_interruzioni(citta, raccolta, stato, [pr.ESITO_ERRORE_RETE], _istante(8, 20))
+    assert stato.interruzione_aperta == _istante(8, 0)
+
+    percorso = tmp_path / "rt" / "prova" / pr.NOME_GAPS
+    assert not percorso.exists(), "la finestra si scrive solo quando si chiude"
+
+    pr._aggiorna_interruzioni(citta, raccolta, stato, [pr.ESITO_SALVATO], _istante(8, 30))
+    assert stato.interruzione_aperta is None
+    riga = json.loads(percorso.read_text(encoding="utf-8").splitlines()[0])
+    assert riga["inizio"] == _istante(8, 0).isoformat(timespec="seconds")
+    assert riga["fine"] == _istante(8, 30).isoformat(timespec="seconds")
+    assert riga["causa"] == pr.CAUSA_ERRORI_RETE
+
+
+def test_un_riavvio_dopo_una_pausa_registra_l_interruzione(tmp_path: Path, server_locale: str) -> None:
+    """La finestra fra l'arresto e il riavvio ha entrambi gli estremi solo qui."""
+    grezza = config_minima(tmp_path, f"{server_locale}/tu")
+    config = pr.interpreta_configurazione(grezza, tmp_path)
+
+    battito = datetime.now(timezone.utc) - timedelta(hours=6)
+    pr.scrivi_battito(tmp_path / "rt" / "prova" / pr.NOME_BATTITO, battito)
+
+    assert pr.esegui(config, cicli_max=1, dormi=lambda _: None) == 0
+
+    righe = [
+        json.loads(r)
+        for r in (tmp_path / "rt" / "prova" / pr.NOME_GAPS).read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(righe) == 1
+    assert righe[0]["causa"] == pr.CAUSA_PROCESSO_FERMO
+    assert righe[0]["durata_secondi"] == pytest.approx(6 * 3600, abs=120)
+
+
+def test_la_prima_esecuzione_non_inventa_interruzioni(tmp_path: Path, server_locale: str) -> None:
+    config = pr.interpreta_configurazione(config_minima(tmp_path, f"{server_locale}/tu"), tmp_path)
+    assert pr.esegui(config, cicli_max=1, dormi=lambda _: None) == 0
+    assert not (tmp_path / "rt" / "prova" / pr.NOME_GAPS).exists()
+
+
+# =============================================================================
+# Indirizzi non cifrati
+# =============================================================================
+
+
+def test_un_indirizzo_http_e_ammesso_ma_segnalato(tmp_path: Path) -> None:
+    """Rifiutarlo significherebbe rinunciare a un'agenzia che pubblica solo in chiaro."""
+    grezza = config_minima(tmp_path, "http://esempio.invalid/tu")
+    config = pr.interpreta_configurazione(grezza, tmp_path)
+    assert config.citta[0].indirizzi_in_chiaro == ("http://esempio.invalid/tu",)
+
+
+def test_un_indirizzo_https_non_risulta_in_chiaro(tmp_path: Path) -> None:
+    config = pr.interpreta_configurazione(
+        config_minima(tmp_path, "https://esempio.invalid/tu"), tmp_path
+    )
+    assert config.citta[0].indirizzi_in_chiaro == ()
+
+
+def test_credenziali_su_http_sono_rifiutate(tmp_path: Path) -> None:
+    """Viaggerebbero in chiaro: meglio un rifiuto all'avvio che una chiave regalata."""
+    grezza = config_minima(tmp_path, "http://esempio.invalid/tu")
+    grezza["citta"][0]["intestazioni_http"] = {"Authorization": "Bearer segreto"}
+    with pytest.raises(pr.ErroreConfigurazione, match="chiaro"):
+        pr.interpreta_configurazione(grezza, tmp_path)
+
+
+def test_credenziali_su_https_sono_ammesse(tmp_path: Path) -> None:
+    grezza = config_minima(tmp_path, "https://esempio.invalid/tu")
+    grezza["citta"][0]["intestazioni_http"] = {"Authorization": "Bearer segreto"}
+    config = pr.interpreta_configurazione(grezza, tmp_path)
+    assert config.citta[0].intestazioni_http == {"Authorization": "Bearer segreto"}
+
+
+def test_il_md5_senza_archivio_statico_e_un_errore(tmp_path: Path) -> None:
+    grezza = config_minima(tmp_path, "https://esempio.invalid/tu")
+    grezza["citta"][0]["url_gtfs_statico_md5"] = "https://esempio.invalid/gtfs.zip.md5"
+    with pytest.raises(pr.ErroreConfigurazione, match="url_gtfs_statico"):
+        pr.interpreta_configurazione(grezza, tmp_path)
 
 
 # =============================================================================

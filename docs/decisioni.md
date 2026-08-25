@@ -228,6 +228,32 @@ passaggi distinti `(trip_id, stop_id, service_date)` estratti dai dump salvati c
 quello che si otterrebbe salvando tutto: devono coincidere. Se il secondo fosse
 maggiore, la deduplica starebbe scartando informazione vera.
 
+**Aggiornamento del 2026-08-25: il risparmio di spazio non si e' verificato.**
+Sui primi 13 giri di raccolta reale, cioe' 52 interrogazioni fra Roma e Torino su
+entrambi i feed, gli esiti sono stati **52 `salvato` e 0 `duplicato`**: nessuna
+delle due agenzie ha mai ripresentato lo stesso `header.timestamp` a un minuto di
+distanza. Entrambe rigenerano il feed piu' spesso di quanto lo interroghiamo,
+quindi su queste due citta' la deduplica **non elimina nulla** e la proiezione di
+1,34 GB al giorno della voce 28 va presa per intera, senza sconti.
+
+Il campione e' pero' piccolo e tutto diurno (16 minuti attorno alle 13:30 di un
+martedi'). Nelle ore notturne, con poche corse in servizio, e' plausibile che il
+feed resti fermo piu' a lungo e qualche duplicato compaia: la misura va rifatta
+su una giornata intera prima di considerarla definitiva.
+
+La decisione **resta corretta**, ma per una ragione sola invece che due. Il
+risparmio di spazio era un beneficio atteso e non si e' materializzato; la tutela
+metodologica contro il doppio conteggio in Fase 3 resta intera, ed e' quella che
+giustifica la scelta: se un giorno una delle due agenzie rallentasse la propria
+cadenza di rigenerazione, senza deduplica ci ritroveremmo a contare piu' volte la
+stessa osservazione mentre calcoliamo medie e deviazioni standard, e non ce ne
+accorgeremmo. Una tutela che costa nulla e non serve quasi mai e' comunque una
+tutela.
+
+Va registrato come **risultato negativo misurato**, ed e' materia per la sezione
+del documento sulle scelte di progetto: il beneficio che avevamo attribuito alla
+deduplica era una previsione non verificata, e la verifica l'ha smentita.
+
 ---
 
 ### 11. Validazione semantica del payload, oltre al parsing protobuf

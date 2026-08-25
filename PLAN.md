@@ -99,6 +99,31 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 
 ---
 
+## Prerequisito da attivare a chiusura della Fase 1
+
+### Consolidamento notturno dei dump grezzi
+
+- [ ] Compito notturno che, sui giorni **gia' chiusi**, converte i `.pb` in
+      `data/processed/observations_<citta>_<data>.parquet` e comprime i grezzi
+      corrispondenti, lasciando intatto il giorno in corso
+- [ ] Il consolidamento e' idempotente e non tocca mai un giorno di cui il
+      collector potrebbe ancora scrivere: al riavvio ripete senza danni
+- [ ] Verifica di reversibilita': da un giorno consolidato si devono poter
+      rigenerare le stesse osservazioni dei `.pb` originali
+
+**Perche' qui e non in Fase 3.** Il volume misurato e' di **1,34 GB al giorno**
+(910 KB per giro x 1440 giri), circa 40 GB su trenta giorni, piu' ~48 MB per ogni
+revisione dell'orario di Roma. Rimandare il consolidamento all'inizio della
+Fase 3, cioe' a due settimane di raccolta, significherebbe arrivarci con decine
+di GB di `.pb` da attraversare e con il rischio concreto di riempire il disco nel
+mezzo della campagna. Attivandolo a chiusura della Fase 1 il costo resta
+costante e la Fase 3 parte gia' da dati in forma tabellare.
+
+La deduplica per `header.timestamp` **non aiuta** su queste due agenzie: vedere
+l'aggiornamento alla voce 10 del registro.
+
+---
+
 ## Fase 2 — Grafo tempo-espanso e ricerca
 
 - [ ] `src/graph/time_expanded.py`: stato `(fermata, istante, numero di cambi)`;

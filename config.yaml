@@ -77,15 +77,14 @@ citta:
   # http:// entrambi i feed erano irraggiungibili; con https:// restituiscono
   # 383 trip_update e 2.210 stop_time_update.
   #
-  # MANCA ANCORA l'orario statico. Finche' non c'e', i dump real-time di Torino
-  # vengono raccolti ma NON saranno interpretabili in Fase 3, perche' non si
-  # potra' risalire agli orari programmati. Cercarlo sul portale open data del
-  # Comune di Torino / GTT (voce "GTFS" o "orario programmato") e incollarlo qui.
+  # GTT non pubblica un file .md5 accanto all'archivio: il confronto avviene
+  # scaricando l'orario e calcolandone l'impronta. Costa piu' banda del metodo
+  # usato per Roma, ma porta allo stesso risultato.
   # ---------------------------------------------------------------------------
   - nome: torino
     attiva: true
     fuso_orario: Europe/Rome
-    url_gtfs_statico: INSERIRE_QUI_URL_GTFS_STATICO_TORINO
+    url_gtfs_statico: https://www.gtt.to.it/open_data/gtt_gtfs.zip
     url_gtfs_statico_md5: null
     feed_rt:
       trip_updates: https://percorsieorari.gtt.to.it/das_gtfsrt/trip_update.aspx

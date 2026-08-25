@@ -215,23 +215,46 @@ def verifica_citta(citta: ConfigCitta, user_agent: str, timeout: float) -> dict[
 
 
 def _verifica_statico(citta: ConfigCitta, intestazioni: dict[str, str], timeout: float) -> bool:
-    """Controlla che l'orario statico sia raggiungibile, senza scaricarlo tutto.
+    """Controlla che l'orario statico sia davvero raggiungibile.
 
-    Se l'agenzia pubblica il .md5 basta quello: sono cinquanta byte e dicono
-    comunque che l'indirizzo funziona.
+    Quando l'agenzia pubblica il .md5 basta quello: sono cinquanta byte e dicono
+    comunque che l'indirizzo funziona. Altrimenti si interroga l'archivio con
+    un'intestazione ``Range``, chiedendo i primi quattro byte: se il server la
+    rispetta bastano quelli per riconoscere la firma di uno zip, e se la ignora
+    arriva l'archivio intero, che va bene lo stesso. Quello che non si puo' fare
+    e' dichiarare utilizzabile un indirizzo che non e' mai stato interrogato.
     """
     print("\n--- gtfs_statico")
     print(f"    {citta.url_gtfs_statico}")
+
     if citta.url_gtfs_statico_md5:
-        risultato = scarica(
-            citta.url_gtfs_statico_md5, intestazioni, timeout, 2, 1.0, 4.0
-        )
+        risultato = scarica(citta.url_gtfs_statico_md5, intestazioni, timeout, 2, 1.0, 4.0)
         if risultato.ok and risultato.dati is not None:
             print(f"    .md5 raggiungibile: {risultato.dati.decode('ascii', 'replace').strip()}")
             return True
         print(f"    .md5 NON raggiungibile: {risultato.dettaglio}")
         return False
-    print("    nessun .md5 configurato: l'archivio verra' scaricato per intero ogni giorno.")
+
+    print("    nessun .md5: l'archivio verra' scaricato per intero a ogni revisione.")
+    assert citta.url_gtfs_statico is not None
+    risultato = scarica(
+        citta.url_gtfs_statico,
+        {**intestazioni, "Range": "bytes=0-3"},
+        max(timeout, 60.0),
+        2,
+        1.0,
+        4.0,
+    )
+    if not risultato.ok or risultato.dati is None:
+        print(f"    archivio NON raggiungibile: {risultato.dettaglio}")
+        return False
+    if not risultato.dati.startswith(b"PK\x03\x04"):
+        anteprima = risultato.dati[:80].decode("utf-8", errors="replace").replace("\n", " ")
+        print(f"    l'indirizzo risponde ma NON restituisce uno zip: {anteprima!r}")
+        return False
+    quanti = len(risultato.dati)
+    nota = "il server ha rispettato Range" if quanti <= 16 else f"scaricato per intero, {quanti:,} byte"
+    print(f"    archivio raggiungibile, firma zip riconosciuta ({nota}).")
     return True
 
 

@@ -1,0 +1,42 @@
+# Dipendenze del progetto, con versioni fissate in modo esatto (==) e non a
+# intervalli (>=). Motivo: la valutazione del progetto poggia su una campagna
+# sperimentale; un intervallo di versioni renderebbe i numeri riportati nella
+# documentazione non riproducibili da chi legge, perche' una risoluzione diversa
+# delle dipendenze puo' cambiare il comportamento di scikit-learn o di pandas.
+# Versioni verificate come installabili da wheel su Windows / CPython 3.14.6.
+#
+# Installare sempre con:  pip install --only-binary=:all: -r requirements.txt
+# Il flag impedisce a pip di ripiegare su una compilazione da sorgente: su
+# Windows clingo e pyarrow richiederebbero un toolchain C++ che non vogliamo
+# presupporre, ed e' meglio un errore immediato che una build silenziosa di
+# venti minuti destinata a fallire.
+
+# --- Dati e calcolo numerico --------------------------------------------------
+numpy==2.5.2
+pandas==3.0.5
+scipy==1.18.1
+pyarrow==25.0.1
+
+# --- Apprendimento e grafici --------------------------------------------------
+scikit-learn==1.9.0
+matplotlib==3.11.1
+
+# --- Base di conoscenza (ASP) -------------------------------------------------
+clingo==5.8.2
+
+# --- GTFS Real-Time -----------------------------------------------------------
+gtfs-realtime-bindings==2.2.0
+protobuf==7.36.0
+
+# --- Configurazione e test ----------------------------------------------------
+PyYAML==6.0.3
+pytest==9.1.1
+
+# --- Fusi orari ---------------------------------------------------------------
+# Windows non include il database IANA dei fusi orari, quindi la zoneinfo della
+# libreria standard non funzionerebbe senza questo pacchetto di soli dati.
+# Arriverebbe comunque come dipendenza indiretta di pandas, ma lo dichiariamo in
+# modo esplicito perche' il nostro codice ne dipende direttamente: la data di
+# servizio GTFS e' un concetto in ora locale e va calcolata correttamente anche
+# nei giorni di cambio dell'ora legale.
+tzdata==2026.3

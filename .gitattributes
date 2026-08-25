@@ -1,0 +1,4 @@
+# Il compito dell'Utilita' di pianificazione di Windows deve restare in UTF-16:
+# schtasks rifiuta un XML in UTF-8. Trattarlo come binario impedisce a git di
+# normalizzare i fine riga, cosa che ne corromperebbe la codifica.
+docs/collector_windows.xml -text

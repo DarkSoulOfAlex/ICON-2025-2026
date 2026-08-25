@@ -470,3 +470,209 @@ proprio per questo.
 **Come si potrebbe verificare.** I 46 test della Fase 0 girano in circa 5 secondi
 e senza rete esterna. Se un test iniziasse a fallire per indisponibilita' di un
 servizio, l'iniezione non starebbe piu' funzionando.
+
+---
+
+## Fase 0-bis — Correzioni dopo la configurazione dei feed reali
+
+### 22. I feed di Torino sono in HTTPS, non in HTTP
+
+**Decisione.** Gli indirizzi GTT in `config.yaml` usano `https://`.
+
+**Alternative considerate.** Usare gli indirizzi `http://` come inizialmente
+indicati, adattando il collector a tollerare il traffico in chiaro.
+
+**Motivo.** Gli indirizzi in `http://` **non sono raggiungibili**. Verificato il
+2026-08-25: il nome `percorsieorari.gtt.to.it` risolve correttamente
+(89.184.107.11), ma la connessione TCP sulla porta 80 scade dopo ~15 s, mentre
+sulla porta 443 si stabilisce in 0,1 s. Non e' un blocco locale della porta 80:
+nello stesso momento `example.com:80` risponde istantaneamente. Con `http://`
+entrambi i feed fallivano con `timed out`; con `https://` restituiscono 382
+entita' e 2.190 `stop_time_update`, di cui 1.420 con il campo `delay` e 770 con
+l'orario assoluto.
+
+**Come si potrebbe verificare.** `python scripts/verifica_feed.py --citta torino`
+deve chiudere con esito OK su entrambi i feed. Un ritorno a `http://`
+riprodurrebbe il timeout.
+
+---
+
+### 23. L'orario statico si confronta tramite il file `.md5`, non riscaricandolo
+
+**Decisione.** Il controllo giornaliero scarica prima il file `.md5` pubblicato
+accanto all'archivio e, se l'impronta coincide con quella gia' archiviata, non
+scarica nulla e registra solo un marcatore. Quando il `.md5` manca (Torino) o non
+e' raggiungibile, si ripiega sullo scaricamento dell'archivio e sul confronto
+della sua impronta. Sostituisce il meccanismo SHA-256 della voce 14.
+
+**Alternative considerate.** Scaricare ogni giorno l'intero archivio e
+confrontarne l'impronta, come faceva la versione precedente; oppure fidarsi
+dell'intestazione HTTP `Last-Modified`.
+
+**Motivo.** L'archivio di Roma pesa **48,5 MB** e cambia quasi ogni giorno.
+Scaricarlo per scoprire che non e' cambiato costerebbe 48 MB al giorno di banda
+per nulla; il `.md5` ne costa 59. `Last-Modified` e' stato scartato perche' molti
+server lo aggiornano a ogni rigenerazione anche quando il contenuto e' identico,
+quindi non distinguerebbe una revisione vera da una ripubblicazione. La scelta di
+MD5 non e' crittografica ma di interoperabilita': e' l'impronta che l'agenzia
+pubblica, e usarne un'altra renderebbe impossibile il confronto senza scaricare.
+
+**Come si potrebbe verificare.** Il test
+`test_se_il_md5_e_invariato_l_archivio_non_viene_scaricato` controlla che nei
+giorni senza modifiche l'indirizzo dell'archivio non venga mai interrogato. Sul
+campo: in `logs/collector.log`, le righe "orario statico invariato" non devono
+essere accompagnate da 48 MB di traffico.
+
+---
+
+### 24. `index.json` mappa ogni data alla versione dell'orario valida quel giorno
+
+**Decisione.** Ogni citta' ha `data/raw/gtfs/<citta>/index.json` con due sezioni:
+`giorni`, che associa ogni data di servizio al file dell'orario in vigore quel
+giorno, e `versioni`, che elenca le revisioni distinte con la loro impronta. Nei
+giorni senza modifiche viene scritto solo un marcatore che punta all'archivio
+precedente, senza duplicarlo.
+
+**Alternative considerate.** Dedurre la versione valida dal nome dei file
+archiviati, ordinandoli per data.
+
+**Motivo.** La deduzione dai nomi funziona finche' non ci sono buchi. Ma il
+collector puo' restare fermo per giorni, e in quel caso non esiste alcun file per
+le date scoperte: senza una mappa esplicita la Fase 3 dovrebbe reimplementare la
+regola "vale l'ultima revisione precedente", che e' esattamente il genere di
+logica che non si vuole duplicare in due punti. La funzione `versione_valida`
+implementa quella regola una volta sola, con i suoi test.
+
+**Come si potrebbe verificare.** In Fase 3, misurare la quota di
+`(trip_id, service_date)` del real-time che trova corrispondenza nell'orario
+indicato da `index.json` per quel giorno. Deve restare vicina al 100% anche a
+cavallo di una revisione.
+
+---
+
+### 25. Registro delle interruzioni in `gaps.jsonl`
+
+**Decisione.** Ogni citta' ha `data/raw/rt/<citta>/gaps.jsonl`, una riga JSON per
+ogni finestra senza raccolta, con inizio, fine, durata e causa. Le cause sono
+`processo_non_attivo` (rilevata al riavvio confrontando l'istante corrente con il
+battito lasciato dal processo precedente) e `errori_di_rete_prolungati` (nessun
+feed raggiungibile per oltre `soglia_interruzione_secondi`, predefinito 300 s).
+
+**Alternative considerate.** Ricostruire le interruzioni a posteriori dai buchi
+nel manifest giornaliero.
+
+**Motivo.** Dal manifest si vede l'assenza di righe, ma non se ne conosce la
+causa, e soprattutto non si distingue "il collector era spento" da "il collector
+girava e il feed non rispondeva": sono due situazioni diverse per il backtesting.
+Senza questa distinzione, una coincidenza che risulta persa potrebbe essere
+semplicemente una coincidenza mai osservata, e la valutazione sperimentale ne
+uscirebbe falsata in un modo non rilevabile a posteriori.
+
+La finestra viene scritta solo quando si **richiude**, perche' prima non se ne
+conosce la fine; se il processo muore mentre una finestra e' aperta, il battito
+su disco resta fermo all'ultimo successo e sara' l'avvio successivo a
+registrarla. E' il motivo per cui il battito viene aggiornato solo sui giri
+riusciti.
+
+La soglia di 300 s (cinque tick) esiste per non trasformare ogni errore isolato
+in una riga: un tick perso e recuperato subito e' rumore, non un buco nei dati.
+
+**Come si potrebbe verificare.** Terminare il collector, attendere dieci minuti e
+riavviarlo: deve comparire una riga con causa `processo_non_attivo` e durata pari
+all'attesa. La somma delle durate in `gaps.jsonl`, rapportata al periodo di
+raccolta, e' la copertura da dichiarare nella documentazione.
+
+---
+
+### 26. Gli indirizzi in chiaro sono ammessi, le credenziali in chiaro no
+
+**Decisione.** Un feed servito in `http://` viene accettato, ma segnalato
+all'avvio e in `--verifica-config`. Se pero' la stessa citta' dichiara delle
+`intestazioni_http` non vuote, la configurazione viene **rifiutata**.
+
+**Alternative considerate.** Rifiutare qualunque indirizzo non cifrato; oppure
+accettarlo senza dire nulla.
+
+**Motivo.** Rifiutare del tutto significherebbe rinunciare in partenza a
+un'agenzia che pubblichi solo in chiaro, e i dati di un feed di trasporto
+pubblico sono pubblici per definizione: il rischio e' la manomissione lungo il
+percorso, non la riservatezza. Le credenziali sono un altro discorso: una chiave
+d'accesso spedita in chiaro per settimane e' un regalo alla rete, e un rifiuto
+all'avvio costa molto meno che accorgersene dopo. Nella configurazione attuale
+nessun indirizzo e' in chiaro (vedere voce 22), ma il controllo resta perche' la
+prossima agenzia potrebbe esserlo.
+
+**Come si potrebbe verificare.** Il test
+`test_credenziali_su_http_sono_rifiutate` copre il caso; `--verifica-config`
+elenca gli indirizzi non cifrati.
+
+---
+
+### 27. Uno script di verifica separato dal collector
+
+**Decisione.** `scripts/verifica_feed.py` scarica una volta ogni feed
+configurato, lo decodifica **contando le entita' per conto proprio** invece di
+riusare il riepilogo del collector, e stampa un esempio decodificato.
+
+**Alternative considerate.** Usare solo `--diagnostica` del collector, che fa
+qualcosa di simile.
+
+**Motivo.** Il doppio conteggio e' voluto: se il numero prodotto dallo script e
+quello prodotto dal collector divergessero, sarebbe il segnale che il parser del
+collector sta contando qualcosa di diverso da quello che crediamo. Un errore di
+quel tipo, scoperto in Fase 3, invaliderebbe settimane di dati. L'esempio
+decodificato serve a capire come la singola agenzia popola i campi, cosa che i
+conteggi non dicono: e' cosi' che si e' visto che Torino fornisce `delay` su
+1.420 passaggi ma l'orario assoluto solo su 770, e che nei `trip_update` di
+Torino manca il `route_id`, presente invece nei `vehicle_positions`, che quindi
+in Fase 3 andra' recuperato dall'orario statico.
+
+Il giudizio e' differenziato per tipo di feed: un `vehicle_positions` non
+contiene TripUpdate per definizione, e giudicarlo con il metro dei `trip_updates`
+lo dichiarerebbe inutilizzabile proprio quando funziona come deve. La prima
+versione dello script aveva questo difetto ed e' stata corretta.
+
+**Come si potrebbe verificare.** `python scripts/verifica_feed.py` deve chiudere
+con codice 0 e "Tutti i feed configurati sono utilizzabili".
+
+---
+
+### 28. Volume misurato della raccolta
+
+**Decisione.** Si conferma il salvataggio non compresso deciso alla voce 7, ma il
+numero che li' mancava ora e' misurato.
+
+**Motivo.** Un giro completo (2 citta' x 2 feed) pesa **910 KB**: Roma 735 KB di
+`trip_updates` e 100 KB di `vehicle_positions`, Torino 66 KB e 28 KB. A 1440 giri
+al giorno la proiezione **grezza** e' di **1,34 GB al giorno**, cioe' circa
+**40 GB su 30 giorni**, prima della deduplica. Su 565 GB liberi resta ampiamente
+sostenibile, ma non e' trascurabile: e' l'ordine di grandezza che rende
+obbligatoria una copia di sicurezza fuori dal disco di lavoro.
+
+L'archivio statico di Roma pesa 48,5 MB per revisione; con un cambio quasi
+quotidiano, sono circa 1,5 GB al mese in piu'.
+
+**Come si potrebbe verificare.** Dopo il primo giorno pieno, confrontare
+l'occupazione reale con la proiezione: la differenza misura il risparmio della
+deduplica per `header.timestamp`. Se l'occupazione reale superasse i 2 GB al
+giorno, la compressione scartata alla voce 7 andrebbe riconsiderata.
+
+---
+
+### 29. Nessun dato raccolto da scartare
+
+**Decisione.** La cartella `data/raw/_scartato/` non e' stata creata, perche' non
+c'era nulla da spostarci.
+
+**Motivo.** Al momento della richiesta di correzione (2026-08-25) lo stato
+verificato era: nessun processo Python attivo, nessun compito pianificato
+registrato, `logs/collector.log` di 0 byte, `data/raw/` contenente i soli file
+`.gitkeep`, e `config.yaml` ancora pieno di segnaposto `INSERIRE_QUI_` che il
+validatore rifiuta all'avvio. La raccolta non era quindi mai partita. Va aggiunto
+che il collector non ha mai gestito i feed *service alerts*: i tipi supportati
+sono sempre stati solo `trip_updates` e `vehicle_positions`, quindi non avrebbe
+potuto raccogliere avvisi testuali nemmeno con gli indirizzi sbagliati.
+
+**Come si potrebbe verificare.** `git log` mostra che `config.yaml` e' passato
+dai segnaposto agli indirizzi reali in un unico commit, senza raccolte
+intermedie; il primo `_manifest.csv` presente su disco e' del 2026-08-25.

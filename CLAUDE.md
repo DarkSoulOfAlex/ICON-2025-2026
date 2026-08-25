@@ -123,6 +123,7 @@ src/graph/             grafo tempo-espanso e ricerca
 src/delays/            modello probabilistico dei ritardi
 src/planner/           pianificatore robusto e baseline
 src/eval/              backtesting, metriche, report
+scripts/               strumenti di verifica eseguibili a mano
 tests/
 results/               CSV e grafici degli esperimenti (DENTRO git)
 docs/decisioni.md      registro delle scelte tecniche

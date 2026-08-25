@@ -62,7 +62,7 @@ ritardi non esiste da nessuna parte e va costruito giorno per giorno.
 Per ogni citta' servono due indirizzi.
 
 | Cosa | Come si chiama sulle pagine open data | Serve a |
-|---|---|---|
+| --- | --- | --- |
 | **GTFS statico** | "GTFS", "GTFS statico", "orario programmato", "static schedule" | conoscere l'orario teorico: fermate, linee, corse, calendario |
 | **GTFS-RT TripUpdates** | "GTFS-RT", "TripUpdates", "aggiornamenti corse", "trip updates" | **i ritardi**: e' l'unica fonte, senza non c'e' progetto |
 | GTFS-RT VehiclePositions | "VehiclePositions", "posizioni veicoli" | facoltativo, ridondanza in caso i TripUpdates siano poveri |
@@ -71,12 +71,25 @@ Dove cercarli: il catalogo **Mobility Database**, **Transit.land**, la sezione
 "open data" del sito dell'azienda di trasporto, i portali open data comunali e
 regionali.
 
-### 2.2 Verificare un feed PRIMA di adottarlo
+### 2.2 Verificare i feed PRIMA di adottarli
 
 Molte agenzie pubblicano solo le posizioni dei veicoli, senza i ritardi. Un feed
 del genere renderebbe il progetto irrealizzabile, e accorgersene dopo tre
-settimane di raccolta significa buttare tre settimane. Il comando seguente
-funziona anche prima di aver compilato `config.yaml`:
+settimane di raccolta significa buttare tre settimane.
+
+Per verificare **tutto quello che c'e' in `config.yaml`** in una volta sola —
+orario statico compreso — con conteggi e un esempio decodificato per ogni feed:
+
+```bash
+python scripts/verifica_feed.py
+python scripts/verifica_feed.py --citta torino
+```
+
+Chiude con codice 0 solo se ogni feed configurato e' utilizzabile. Da eseguire
+ogni volta che si tocca un indirizzo, e ogni tanto durante la campagna: le
+agenzie cambiano gli endpoint senza avvisare.
+
+Per giudicare **un singolo indirizzo** che non e' ancora in configurazione:
 
 ```bash
 python -m src.collector.poll_realtime --diagnostica "https://indirizzo/del/feed"
@@ -100,11 +113,22 @@ Stampa cosa contiene davvero il feed e chiude con un giudizio esplicito:
 Se il giudizio e' `NON utilizzabile`, quel feed non va messo in configurazione:
 va cercata un'altra citta'.
 
-### 2.3 Compilare `config.yaml`
+### 2.3 Stato attuale della configurazione
 
-Aprire [config.yaml](config.yaml) e sostituire i valori che iniziano con
-`INSERIRE_QUI_`. Rinominare `citta_a` e `citta_b` con i nomi reali (minuscoli,
-senza spazi: diventano nomi di cartella). Poi:
+[config.yaml](config.yaml) contiene gia' due citta' verificate:
+
+| Citta' | trip_updates | vehicle_positions | orario statico |
+| --- | --- | --- | --- |
+| **roma** (Roma Mobilita') | OK, ritardi espliciti nel campo `delay` | OK | OK, con `.md5` |
+| **torino** (GTT) | OK, ritardi espliciti nel campo `delay` | OK | **MANCANTE** |
+
+**Resta da trovare l'orario statico di Torino.** Finche' manca, i dump real-time
+di Torino vengono raccolti ma non saranno interpretabili in Fase 3, perche' non
+si potra' risalire agli orari programmati. Cercarlo sul portale open data del
+Comune di Torino o di GTT (voce "GTFS" o "orario programmato") e incollarlo in
+`url_gtfs_statico` sotto `torino`.
+
+Dopo ogni modifica alla configurazione:
 
 ```bash
 python -m src.collector.poll_realtime --verifica-config
@@ -275,15 +299,60 @@ cosa stia arrivando davvero.
 ```
 data/raw/rt/<citta>/<AAAA-MM-GG>/trip_updates/<HHMMSS>.pb
 data/raw/rt/<citta>/<AAAA-MM-GG>/vehicle_positions/<HHMMSS>.pb
-data/raw/rt/<citta>/<AAAA-MM-GG>/_manifest.csv
+data/raw/rt/<citta>/<AAAA-MM-GG>/_manifest.csv        una riga per interrogazione
 data/raw/rt/<citta>/<AAAA-MM-GG>/_scarti/<tipo>/<HHMMSS>.bin
-data/raw/gtfs/<citta>/<AAAA-MM-GG>_<impronta>.zip
-data/raw/gtfs/<citta>/_stato_snapshot.json
+data/raw/rt/<citta>/gaps.jsonl                        finestre senza raccolta
+data/raw/rt/<citta>/_battito.json                     ultima raccolta riuscita
+data/raw/gtfs/<citta>/<AAAA-MM-GG>.zip                revisioni dell'orario
+data/raw/gtfs/<citta>/index.json                      data -> orario valido
 ```
 
 Le date sono **locali della citta'**, non UTC, perche' la `service_date` del GTFS
 e' un concetto in ora locale.
 
+### `index.json` — quale orario vale in quale giorno
+
+L'orario statico di Roma cambia quasi ogni giorno e i `trip_id` non sono stabili
+nel tempo: un dump real-time e' interpretabile solo insieme alla versione
+dell'orario in vigore **quel** giorno. `index.json` tiene questa mappa:
+
+```json
+{
+  "giorni": {
+    "2026-08-25": {"file": "2026-08-25.zip", "md5": "e328ed0e...", "origine": "scaricato"},
+    "2026-08-26": {"file": "2026-08-25.zip", "md5": "e328ed0e...", "origine": "invariato"}
+  },
+  "versioni": {"e328ed0e...": {"file": "2026-08-25.zip", "prima_data": "2026-08-25"}}
+}
+```
+
+Nei giorni senza modifiche non viene scritto un nuovo archivio, solo un marcatore
+che punta al precedente. In Fase 3 la funzione `versione_valida(indice, data)`
+risolve anche le date scoperte, applicando la regola "vale l'ultima revisione
+precedente".
+
+### `gaps.jsonl` — quando NON abbiamo raccolto
+
+Una riga JSON per ogni finestra senza raccolta:
+
+```json
+{"citta":"roma","inizio":"...","fine":"...","durata_secondi":21600,"causa":"processo_non_attivo"}
+```
+
+Le cause sono `processo_non_attivo` (il collector era spento: rilevato al riavvio
+dal confronto con `_battito.json`) e `errori_di_rete_prolungati` (il collector
+girava ma nessun feed rispondeva per oltre `soglia_interruzione_secondi`).
+
+Serve a due cose: **escludere quelle finestre dal backtesting** — senza, una
+coincidenza mai osservata verrebbe scambiata per una coincidenza persa — e
+**dichiarare onestamente la copertura** nella documentazione.
+
+### Copia di sicurezza
+
 `data/` e' fuori da git: e' troppo grande e ricostruibile solo raccogliendolo di
-nuovo, cosa che per definizione non e' possibile. **Fatene una copia di sicurezza
-altrove**: se si perde, si perde il progetto.
+nuovo, cosa che per definizione non e' possibile.
+
+Volume misurato: un giro completo sulle due citta' pesa **910 KB**, cioe' circa
+**1,3 GB al giorno** grezzi, piu' ~48 MB per ogni revisione dell'orario di Roma.
+Su trenta giorni sono nell'ordine dei 40 GB. **Fatene una copia di sicurezza su
+un secondo supporto**: se si perde, si perde il progetto.

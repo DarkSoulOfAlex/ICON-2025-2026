@@ -20,7 +20,7 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 - la **Fase 5** consuma tutti i giorni disponibili: piu' tardi si fa, meglio
   esce.
 
-**Data di avvio della raccolta:** _da annotare qui appena il collector parte._
+**Data di avvio della raccolta:** 2026-08-25 (Roma e Torino).
 
 ---
 
@@ -39,21 +39,41 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
   - [x] validazione del payload prima del salvataggio; scarti conservati a parte
   - [x] deduplica dei dump tramite `header.timestamp`
   - [x] manifest giornaliero con una riga per ogni interrogazione, anche fallita
-  - [x] snapshot giornaliero dell'orario statico, archiviato solo se cambia
+  - [x] archiviazione giornaliera dell'orario statico, confronto tramite .md5
   - [x] cadenza a tick fissi, senza deriva cumulativa
   - [x] log ruotato su file e riepilogo orario
   - [x] uscita ordinata su segnale di terminazione
   - [x] modalita' `--diagnostica` per giudicare un feed prima di adottarlo
-- [x] Test: 46 casi, logica pura piu' un giro completo su server HTTP locale
+- [x] Test: 77 casi, logica pura piu' giri completi su server HTTP locale
 - [x] `README.md` con le istruzioni di esecuzione in background
 - [x] `docs/decisioni.md` inaugurato
 
-**In attesa di voi, per chiudere la fase:**
+- [x] Scelta delle due citta': Roma (Roma Mobilita') e Torino (GTT)
+- [x] Indirizzi dei feed in `config.yaml`, verificati uno per uno
+- [x] Raccolta avviata in background
 
-- [ ] Scelta delle due citta'
-- [ ] Indirizzi dei feed incollati in `config.yaml`
-- [ ] `--diagnostica` eseguita su ogni feed, con esito annotato in `decisioni.md`
-- [ ] Raccolta avviata in background e verificata dopo un'ora
+---
+
+## Fase 0-bis — Correzioni dopo la configurazione dei feed reali
+
+- [x] Indirizzi reali di Roma e Torino in `config.yaml`
+- [x] Torino corretto da `http://` a `https://`: la porta 80 di GTT non
+      accetta connessioni (voce 22 del registro)
+- [x] Archiviazione dell'orario statico tramite il file `.md5`, con `index.json`
+      che mappa ogni data alla versione valida quel giorno
+- [x] `gaps.jsonl`: registro delle finestre senza raccolta, con causa
+- [x] Gestione esplicita degli indirizzi non cifrati; credenziali in chiaro
+      rifiutate all'avvio
+- [x] `scripts/verifica_feed.py`, eseguito su tutti i feed configurati
+- [x] Nessun dato da scartare: la raccolta non era mai partita (voce 29)
+
+**Ancora aperto:**
+
+- [ ] **Orario statico di Torino**: manca l'indirizzo. Finche' non c'e', i dump
+      real-time di Torino vengono raccolti ma non saranno interpretabili in
+      Fase 3, perche' non si potra' risalire agli orari programmati.
+- [ ] Copia di sicurezza di `data/` su un secondo supporto (~1,3 GB al giorno)
+- [ ] Verifica della copertura dopo il primo giorno pieno
 
 ---
 

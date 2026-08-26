@@ -914,3 +914,210 @@ successive andra' riferito alla sola Torino, mai alla media delle due citta'.
 **Come si potrebbe verificare.** Aggiungere al progetto una terza citta' che
 pubblichi `transfers.txt` e una gerarchia di stazioni, e osservare che i primi due
 livelli della gerarchia entrino in funzione senza modificare `rules.lp`.
+
+---
+
+## Fase 0-quater — Spostamento della raccolta su VM
+
+### 37. La raccolta si sposta su una VM sempre accesa
+
+**Decisione.** Il collector gira su una VM Oracle Ubuntu 24.04 aarch64 e non piu'
+sul PC di lavoro. La VM esegue **soltanto** la raccolta e il consolidamento
+notturno; esperimenti, test e scrittura del documento restano sul PC.
+
+**Alternative considerate.** Tenere la raccolta sul PC configurando il risparmio
+energetico perche' non vada mai in sospensione.
+
+**Motivo.** La copertura reale misurata sul PC e' stata del **7,2%**: in ventidue
+ore di calendario, novantacinque giri su millecentoventidue attesi, con 20,4 ore
+registrate in `gaps.jsonl` come interruzioni. La causa non era il software ma la
+macchina, che si spegne e si sospende. Configurare il risparmio energetico
+avrebbe risolto il caso della sospensione ma non quello dello spegnimento
+volontario, e avrebbe legato la campagna sperimentale all'abitudine di non
+spegnere il computer per due settimane.
+
+La divisione dei ruoli e' altrettanto deliberata. Duplicare l'ambiente completo
+sulla VM avrebbe significato installare `clingo`, `scikit-learn`, `matplotlib`,
+`scipy` e `pytest` su una macchina che non li usa, e soprattutto avrebbe creato
+un secondo posto in cui gli esperimenti possono essere eseguiti, con il rischio
+di risultati prodotti su due macchine diverse e non confrontabili.
+
+**Divergenza fra i due ambienti, dichiarata.** La VM usa CPython 3.12 su aarch64,
+il PC CPython 3.14.6 su x86-64. Le **versioni dei pacchetti sono identiche**
+(vedere la voce 38), quindi la divergenza si riduce alla versione minore
+dell'interprete e all'architettura. Nessun risultato sperimentale viene prodotto
+sulla VM: la VM raccoglie e consolida, cioe' esegue trasformazioni deterministiche
+di formato, mentre ogni numero che finisce nel documento e' calcolato sul PC. La
+riproducibilita' resta percio' intatta.
+
+**Come si potrebbe verificare.** Confrontare la copertura reale calcolata da
+`deploy/stato.sh` prima e dopo lo spostamento. Sul PC era del 7,2%; sulla VM deve
+restare vicina al 100% salvo interruzioni dichiarate in `gaps.jsonl`.
+
+---
+
+### 38. Dipendenze della VM: sottoinsieme, ma versioni identiche
+
+**Decisione.** `deploy/requirements-collector.txt` elenca sei pacchetti invece di
+dodici, con le **stesse versioni esatte** di `requirements.txt`.
+
+**Alternative considerate.** Riusare `requirements.txt` per intero; oppure
+allentare i vincoli di versione se qualcuno non fosse esistito per aarch64.
+
+**Motivo.** Il collector importa dalla libreria standard piu' `yaml` e
+`google.transit`; il consolidamento aggiunge `pandas`, `pyarrow` e `numpy`. Il
+resto non serve. Prima di scrivere qualunque cosa e' stato verificato, con una
+risoluzione mirata alla piattaforma di destinazione, che tutte e sei le versioni
+esistano come wheel `cp312` per `manylinux aarch64`: PyYAML e protobuf su
+`manylinux2014`, pandas su `manylinux_2_24`, numpy su `manylinux_2_27`, pyarrow
+su `manylinux_2_28`, gtfs-realtime-bindings come pacchetto puro. Il tag piu'
+restrittivo richiede glibc 2.28 e Ubuntu 24.04 ne ha la 2.39.
+
+Non e' stato necessario allentare alcun vincolo, che era l'esito che rischiava di
+compromettere la riproducibilita'. E' stata inoltre verificata la compatibilita'
+sintattica dei moduli che girano sulla VM con Python 3.12 e 3.11, dato che sono
+stati scritti su 3.14.
+
+**Come si potrebbe verificare.** Ripetere `pip install --dry-run
+--only-binary=:all:` con i flag di piattaforma. Se una wheel sparisse dall'indice
+il comando fallirebbe subito invece di ripiegare su una compilazione.
+
+---
+
+### 39. L'indirizzo della VM sta in `~/.ssh/config`, non in un file del progetto
+
+**Decisione.** Gli script usano l'alias ssh `vm-icon`. Indirizzo e chiave stanno
+nella configurazione ssh dell'utente, fuori dal repository.
+
+**Alternative considerate.** Un file `deploy/vm.env` con `VM_HOST` e `VM_KEY`,
+escluso da git tramite `.gitignore`.
+
+**Motivo.** Il repository viene consegnato al docente, quindi ne' l'indirizzo
+della VM ne' alcuna chiave devono poterci finire. Con `vm.env` la protezione
+dipende interamente dal `.gitignore`: basta un `git add -f` distratto, o
+l'invio di un archivio compresso della cartella, e il segreto esce. Con la
+configurazione ssh il file sta altrove, quindi **il rischio non esiste per
+costruzione** invece di essere mitigato. In piu' l'alias funziona identico per
+`ssh`, `scp` e `rsync`, mentre `vm.env` avrebbe richiesto a ogni script di
+comporre le opzioni a mano.
+
+`deploy/vm.env` resta comunque nel `.gitignore` come rete di sicurezza.
+
+**Come si potrebbe verificare.** Una ricerca di indirizzi IP e di materiale di
+chiave su `deploy/` non deve trovare nulla. Gli script che non trovano l'alias
+configurato si fermano stampando il blocco da incollare, senza tentare
+connessioni verso un host vuoto.
+
+---
+
+### 40. Sincronizzazione senza rsync
+
+**Decisione.** `deploy/sync.sh` usa `rsync` se lo trova nel PATH e altrimenti
+ripiega su `tar` attraverso `ssh`.
+
+**Alternative considerate.** Richiedere l'installazione di rsync da MSYS2;
+oppure usare `scp -r` ritrasferendo tutto ogni volta.
+
+**Motivo.** E' stato verificato che `rsync` non esiste in Git Bash e non e'
+presente nemmeno nell'installazione MSYS2 sulla macchina: uno script scritto
+attorno a rsync sarebbe fallito al primo lancio. Chiedere di installarlo per un
+solo comando non e' proporzionato.
+
+L'incrementalita' non si perde, e la ragione e' architetturale piu' che
+implementativa. Il payload predefinito - archivi statici, `index.json`, manifest,
+`gaps.jsonl`, parquet - pesa pochi MB e si trasferisce per intero in pochi
+secondi, quindi distinguere il gia'-presente costerebbe piu' del trasferimento.
+I dump grezzi, dopo il consolidamento, diventano archivi giornalieri
+**immutabili**: un giorno chiuso non cambia mai piu', quindi basta scaricare i
+file che non si hanno gia', e lo script li confronta per nome prima di chiederli.
+
+**Come si potrebbe verificare.** Eseguire `sync.sh --grezzi` due volte di
+seguito: la seconda non deve trasferire alcun archivio giornaliero.
+
+---
+
+### 41. Deduplica delle osservazioni, e il risultato negativo che l'accompagna
+
+**Decisione.** Per ogni passaggio, identificato da `(trip_id, stop_sequence)`, si
+conserva una riga a ogni **cambio** del valore osservato, con il `timestamp_feed`
+della prima comparsa di quel valore. Sono disponibili due politiche alternative,
+`ultimo` e `fasce`.
+
+**Alternative considerate.** Una riga per passaggio, conservando solo l'ultima
+osservazione; oppure una riga per ogni dump, senza alcuna deduplica.
+
+**Motivo.** Una previsione che cambia nel corso della giornata **non e' un
+duplicato**: e' l'evoluzione della stima dell'azienda, e dice quanto quella
+previsione fosse affidabile con un certo anticipo. E' informazione che in Fase 3
+potremmo voler usare come variabile esplicativa, e che non e' ricostruibile a
+posteriori se la si getta ora. Conservare solo l'ultimo valore distruggerebbe un
+dato irripetibile; conservare una riga per dump conserverebbe soprattutto
+ripetizioni.
+
+L'implementazione registra i cambi anziche' i valori distinti in senso
+insiemistico. La differenza si vede solo quando una previsione torna a un valore
+gia' visto: in quel caso la ricomparsa viene conservata come evento a se'. E'
+voluto, perche' un'oscillazione e' informazione sulla stabilita' della stima, e
+perche' riconoscere i valori gia' visti richiederebbe di tenere in memoria
+l'intero insieme dei valori di ogni passaggio, che su Roma significa decine di
+milioni di voci.
+
+**Il risultato negativo.** Il presupposto della regola era che lo stesso
+passaggio comparisse identico in centinaia di dump consecutivi, e che la
+deduplica scartasse quindi la quasi totalita' delle righe. **Misurato sui dati
+reali, non e' cosi'.** Su 98 dump di Roma, 1.982.754 `stop_time_update` hanno
+prodotto 1.361.088 righe, cioe' il **68,6%** del totale: Roma ricalcola la
+previsione quasi a ogni giro, e ogni passaggio riceve in media 10,9 valori
+distinti, fino a un massimo di 76. Su Torino la quota e' il 65,1% con 5,4 valori
+per passaggio. La proiezione a giornata piena e' di circa **20 milioni di righe
+al giorno per Roma** e 2,2 milioni per Torino, quindi dell'ordine dei 280 milioni
+di righe su due settimane.
+
+La regola resta quella scelta, perche' la motivazione che la giustifica non e'
+il risparmio ma la conservazione di un'informazione irripetibile. Va pero'
+registrato che il beneficio in volume che le era stato attribuito non si e'
+verificato, e che il dimensionamento della Fase 3 va fatto su questi numeri e non
+su quelli attesi. Le politiche `ultimo` e `fasce` esistono proprio per poter
+cambiare idea sulla base di una misura invece che di una previsione.
+
+**Come si potrebbe verificare.** Confrontare, in Fase 3, la qualita' del modello
+addestrato sui dati completi con quella ottenuta usando la sola ultima
+osservazione per passaggio. Se la differenza fosse trascurabile, la politica
+`ultimo` sarebbe preferibile e ridurrebbe il dataset di un ordine di grandezza.
+
+---
+
+### 42. Torino non trasmette lo `stop_id`: la chiave di join e' `(trip_id, stop_sequence)`
+
+**Decisione.** L'orario programmato si interroga con la chiave
+`(trip_id, stop_sequence)`, e lo `stop_id` mancante viene riempito dall'orario
+statico.
+
+**Alternative considerate.** La chiave naturale `(trip_id, stop_id,
+stop_sequence)`, che era la prima implementazione.
+
+**Motivo.** E' stato scoperto eseguendo il consolidamento sui dati veri e
+notando che il numero di passaggi conservati non tornava: 4.691 invece dei 13.092
+misurati. La causa e' che **GTT non include mai lo `stop_id`** nei
+`stop_time_update`, identificando la fermata con il solo `stop_sequence`; Roma si
+comporta all'opposto e lo fornisce sempre. Con la chiave naturale, il join su
+Torino non trovava mai corrispondenza: la colonna `stop_id` restava vuota,
+l'orario programmato nullo e il ritardo non calcolabile, e il parquet di Torino
+sarebbe stato inutilizzabile in Fase 3 senza che nulla lo segnalasse.
+
+La specifica GTFS garantisce che `stop_sequence` sia univoco dentro una corsa,
+quindi la chiave ridotta e' altrettanto precisa e funziona su entrambe le
+aziende. Quando il feed fornisce anche lo `stop_id` si usa quello del feed e si
+verifica che coincida con quello statico; una divergenza viene contata e
+segnalata, perche' significherebbe che la corsa in circolazione non e' quella che
+l'orario descrive.
+
+Lo stesso meccanismo copre il `route_id`, anch'esso assente nei `trip_update` di
+Torino. Si potrebbe ricavarlo dai `vehicle_positions`, ma richiederebbe un
+accoppiamento temporale fra due feed con timestamp diversi, mentre `trips.txt`
+lo dichiara in modo esatto.
+
+**Come si potrebbe verificare.** Dopo il consolidamento, il conteggio dei valori
+vuoti nelle colonne `stop_id` e `route_id` deve essere zero per entrambe le
+citta', e quello dei nulli in `orario_programmato` e `ritardo_secondi` pure. Sui
+due giorni gia' consolidati e' cosi'.

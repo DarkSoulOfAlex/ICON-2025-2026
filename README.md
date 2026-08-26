@@ -148,6 +148,17 @@ python -m src.collector.poll_realtime --una-volta --verboso
 
 ## 3. Far girare la raccolta in background
 
+> **La raccolta di questo progetto NON gira piu' su Windows.** E' stata spostata
+> su una VM Ubuntu sempre accesa, dopo aver misurato sul PC una copertura reale
+> del 7,2%: la macchina si spegne e si sospende, e in ventidue ore di calendario
+> aveva raccolto novantacinque giri su millecentoventidue attesi. Le istruzioni
+> per la VM sono in [deploy/README_DEPLOY.md](deploy/README_DEPLOY.md); dal PC si
+> usano `deploy/sync.sh` per scaricare i dati e
+> `ssh vm-icon '~/icon/deploy/stato.sh'` per controllare la raccolta.
+>
+> Quanto segue resta valido per chi volesse raccogliere in locale, ed e' il
+> motivo per cui non e' stato cancellato.
+
 La raccolta deve restare attiva 24 ore su 24 per settimane. Il processo
 sopravvive da solo agli errori di rete e riparte pulito dopo un'interruzione: il
 compito del sistema operativo e' solo riavviarlo dopo un riavvio della macchina o

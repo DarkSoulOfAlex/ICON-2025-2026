@@ -98,28 +98,30 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 
 ---
 
-## Prerequisito da attivare a chiusura della Fase 1
+## Fase 0-quater — Raccolta su VM e consolidamento notturno
 
-### Consolidamento notturno dei dump grezzi
+La raccolta gira su una VM Oracle Ubuntu 24.04 aarch64, sempre accesa. La VM
+esegue **solo** raccolta e consolidamento; esperimenti, test e documento restano
+sulla macchina di analisi.
 
-- [ ] Compito notturno che, sui giorni **gia' chiusi**, converte i `.pb` in
-      `data/processed/observations_<citta>_<data>.parquet` e comprime i grezzi
-      corrispondenti, lasciando intatto il giorno in corso
-- [ ] Il consolidamento e' idempotente e non tocca mai un giorno di cui il
-      collector potrebbe ancora scrivere: al riavvio ripete senza danni
-- [ ] Verifica di reversibilita': da un giorno consolidato si devono poter
-      rigenerare le stesse osservazioni dei `.pb` originali
+- [x] `deploy/requirements-collector.txt`: sei dipendenze, versioni identiche a
+      quelle del progetto, verificate come wheel cp312/aarch64
+- [x] `deploy/collector.service`: parte al boot senza login
+- [x] `deploy/install.sh`: idempotente, non avvia prima della copia dei dati
+- [x] `deploy/README_DEPLOY.md`
+- [x] Dati preesistenti copiati sulla VM, raccolta avviata e verificata
+- [x] Compito pianificato di Windows rimosso
+- [x] `src/gtfs/indice_statico.py`: le funzioni dell'indice non stanno piu' nel
+      collector, cosi' il consolidamento non deve importarlo
+- [x] `deploy/sync.sh`: rsync se c'e', altrimenti tar su ssh
+- [x] `deploy/stato.sh`: copertura **reale**, non quella dei soli manifest
+- [x] `src/consolida/notturno.py` con `consolidamento.timer` alle 04:00
+- [x] Voci 37-42 del registro delle decisioni
 
-**Perche' qui e non in Fase 3.** Il volume misurato e' di **1,34 GB al giorno**
-(910 KB per giro x 1440 giri), circa 40 GB su trenta giorni, piu' ~48 MB per ogni
-revisione dell'orario di Roma. Rimandare il consolidamento all'inizio della
-Fase 3, cioe' a due settimane di raccolta, significherebbe arrivarci con decine
-di GB di `.pb` da attraversare e con il rischio concreto di riempire il disco nel
-mezzo della campagna. Attivandolo a chiusura della Fase 1 il costo resta
-costante e la Fase 3 parte gia' da dati in forma tabellare.
+**Da fare sulla VM:**
 
-La deduplica per `header.timestamp` **non aiuta** su queste due agenzie: vedere
-l'aggiornamento alla voce 10 del registro.
+- [ ] Installare il consolidamento: `git pull` e `./deploy/install.sh`
+- [ ] Verificare dopo la prima notte: `./deploy/stato.sh`
 
 ---
 

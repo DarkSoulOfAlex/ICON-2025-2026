@@ -415,12 +415,18 @@ def velocita_massima(archivio: ArchivioGTFS, percentile: float | None = None) ->
     if velocita.size == 0:
         raise ErroreGrafo("nessun arco utilizzabile per misurare la velocita'")
 
-    quantili = {f"p{int(q * 100)}": float(np.quantile(velocita, q)) for q in (0.5, 0.9, 0.99, 0.999)}
+    # I nomi sono espliciti e non generati: int(0.999 * 100) vale 99, e una
+    # generazione automatica farebbe sovrascrivere il p99 dal p99,9 senza che
+    # nulla lo segnali.
     return {
         "archi": float(velocita.size),
         "massimo_m_s": float(velocita.max()),
         "massimo_km_h": float(velocita.max() * 3.6),
-        **quantili,
+        "p50": float(np.quantile(velocita, 0.50)),
+        "p90": float(np.quantile(velocita, 0.90)),
+        "p99": float(np.quantile(velocita, 0.99)),
+        "p999": float(np.quantile(velocita, 0.999)),
+        "p99_km_h": float(np.quantile(velocita, 0.99) * 3.6),
         "p999_km_h": float(np.quantile(velocita, 0.999) * 3.6),
         "oltre_150_km_h": float((velocita * 3.6 > 150).sum()),
     }

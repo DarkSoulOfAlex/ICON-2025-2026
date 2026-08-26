@@ -104,40 +104,88 @@ def coppie_casuali(grafo, quante: int, seme: int) -> list[tuple[str, str]]:
     return [tuple(generatore.sample(servite, 2)) for _ in range(quante)]
 
 
-def misura_ricerca(citta: str, grafo, inizio: int, velocita: float, quante: int) -> list[dict]:
-    """Confronto A* contro Dijkstra, piu' il costo dei cambi nello stato."""
+def misura_ricerca(
+    citta: str, grafo, inizio: int, velocita_max: float, velocita_p999: float, quante: int
+) -> list[dict]:
+    """Confronta le varianti della ricerca sulle stesse query, in formato lungo.
+
+    Ogni riga porta il valore di ``V`` usato e se sia il massimo assoluto o un
+    percentile, perche' un risultato prodotto con un'euristica non ammissibile
+    resti riconoscibile come tale anche mesi dopo, guardando solo il CSV.
+
+    La colonna ``ottimo`` e' il numero che conta davvero sulla variante non
+    ammissibile: dice su quante query rinunciare alla garanzia costa davvero un
+    itinerario peggiore, invece di lasciarlo come rischio teorico.
+    """
     righe = []
     for indice, (origine, destinazione) in enumerate(coppie_casuali(grafo, quante, SEME), 1):
-        astar = cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita, True)
-        dijkstra = cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita, False)
-        proiettato = cerca_primo_arrivo(
-            grafo, origine, destinazione, inizio, velocita, True, cambi_nello_stato=False
-        )
-        pareto = cerca_frontiera_pareto(grafo, origine, destinazione, inizio)
+        esiti = {
+            "astar_ammissibile": (
+                cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita_max, True),
+                True, velocita_max, "massimo",
+            ),
+            "dijkstra": (
+                cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita_max, False),
+                True, float("nan"), "nessuna",
+            ),
+            "astar_cambi_proiettati": (
+                cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita_max, True,
+                                   cambi_nello_stato=False),
+                True, velocita_max, "massimo",
+            ),
+            "astar_p999": (
+                cerca_primo_arrivo(grafo, origine, destinazione, inizio, velocita_p999, True),
+                False, velocita_p999, "p99.9",
+            ),
+        }
 
-        if astar.trovato and dijkstra.trovato and astar.orario_arrivo != dijkstra.orario_arrivo:
-            raise SystemExit(
-                f"A* e Dijkstra discordano su {origine}->{destinazione}: "
-                f"{astar.orario_arrivo} contro {dijkstra.orario_arrivo}. "
-                "L'euristica non e' ammissibile."
+        # L'ottimo e' quello di Dijkstra, che non usa alcuna euristica e quindi
+        # non puo' essere influenzato da una stima sbagliata.
+        riferimento = esiti["dijkstra"][0]
+        if esiti["astar_ammissibile"][0].trovato and riferimento.trovato:
+            if esiti["astar_ammissibile"][0].orario_arrivo != riferimento.orario_arrivo:
+                raise SystemExit(
+                    f"A* ammissibile discorda da Dijkstra su {origine}->{destinazione}: "
+                    "l'euristica non e' ammissibile, il che contraddice la dimostrazione."
+                )
+
+        for nome, (esito, ammissibile, velocita, tipo) in esiti.items():
+            righe.append(
+                {
+                    "citta": citta, "coppia": indice,
+                    "origine": origine, "destinazione": destinazione,
+                    "variante": nome,
+                    "ammissibile": ammissibile,
+                    "velocita_m_s": velocita,
+                    "tipo_velocita": tipo,
+                    "trovato": esito.trovato,
+                    "minuti_arrivo": (esito.orario_arrivo - inizio) / 60 if esito.trovato else None,
+                    "cambi": esito.cambi,
+                    "espansi": esito.stati_espansi,
+                    "secondi": esito.tempo_secondi,
+                    "ottimo": (
+                        None if not (esito.trovato and riferimento.trovato)
+                        else esito.orario_arrivo == riferimento.orario_arrivo
+                    ),
+                    "pareto_soluzioni": None,
+                }
             )
 
+        pareto = cerca_frontiera_pareto(grafo, origine, destinazione, inizio)
         righe.append(
             {
-                "citta": citta,
-                "coppia": indice,
-                "origine": origine,
-                "destinazione": destinazione,
-                "trovato": astar.trovato,
-                "minuti_arrivo": (astar.orario_arrivo - inizio) / 60 if astar.trovato else None,
-                "cambi": astar.cambi,
-                "astar_espansi": astar.stati_espansi,
-                "astar_secondi": astar.tempo_secondi,
-                "dijkstra_espansi": dijkstra.stati_espansi,
-                "dijkstra_secondi": dijkstra.tempo_secondi,
-                "proiettato_espansi": proiettato.stati_espansi,
+                "citta": citta, "coppia": indice,
+                "origine": origine, "destinazione": destinazione,
+                "variante": "pareto", "ammissibile": True,
+                "velocita_m_s": float("nan"), "tipo_velocita": "nessuna",
+                "trovato": bool(pareto.frontiera),
+                "minuti_arrivo": (min(e.orario_arrivo for e in pareto.frontiera) - inizio) / 60
+                if pareto.frontiera else None,
+                "cambi": None,
+                "espansi": pareto.stati_espansi,
+                "secondi": pareto.tempo_secondi,
+                "ottimo": None,
                 "pareto_soluzioni": len(pareto.frontiera),
-                "pareto_secondi": pareto.tempo_secondi,
             }
         )
         if indice % 10 == 0:
@@ -145,86 +193,159 @@ def misura_ricerca(citta: str, grafo, inizio: int, velocita: float, quante: int)
     return righe
 
 
+def _per_variante(ricerca: pd.DataFrame, citta: str, variante: str) -> pd.DataFrame:
+    selezione = ricerca[(ricerca["citta"] == citta) & (ricerca["variante"] == variante)]
+    return selezione.set_index("coppia")
+
+
 def disegna(ricerca: pd.DataFrame, grafo_df: pd.DataFrame, destinazione: Path) -> None:
-    figura, assi = plt.subplots(2, 2, figsize=(11, 8.5))
+    figura, assi = plt.subplots(2, 2, figsize=(11.5, 8.5))
+    citta_elenco = sorted(ricerca["citta"].unique())
 
     # (a) costo del grafo al crescere della finestra
     asse = assi[0][0]
     sintesi = grafo_df.groupby(["citta", "finestra_minuti"], as_index=False).agg(
-        eventi=("eventi", "mean"), archi=("archi", "mean"), memoria=("memoria_mb", "mean")
+        eventi=("eventi", "mean"), archi=("archi", "mean")
     )
-    for citta in sorted(sintesi["citta"].unique()):
+    for citta in citta_elenco:
         serie = sintesi[sintesi["citta"] == citta].sort_values("finestra_minuti")
         asse.plot(serie["finestra_minuti"], serie["archi"], marker=MARCATORI.get(citta, "^"),
                   color=COLORI.get(citta, "#666"), linewidth=2, markersize=6,
                   label=f"{citta.capitalize()}, archi")
         asse.plot(serie["finestra_minuti"], serie["eventi"], linestyle="--",
                   marker=MARCATORI.get(citta, "^"), color=COLORI.get(citta, "#666"),
-                  linewidth=1.5, markersize=5, label=f"{citta.capitalize()}, eventi")
-    asse.set_xscale("log"); asse.set_yscale("log")
-    asse.set_xlabel("Finestra temporale (minuti)"); asse.set_ylabel("Numero")
+                  linewidth=1.5, markersize=5, alpha=0.7, label=f"{citta.capitalize()}, eventi")
+    asse.set_xscale("log")
+    asse.set_yscale("log")
+    asse.set_xlabel("Finestra temporale (minuti)")
+    asse.set_ylabel("Numero")
     asse.set_title("(a) Dimensione del grafo tempo-espanso", fontsize=10)
-    asse.grid(True, which="both", linewidth=0.4, alpha=0.35); asse.set_axisbelow(True)
+    asse.grid(True, which="both", linewidth=0.4, alpha=0.35)
+    asse.set_axisbelow(True)
     asse.legend(fontsize=8, frameon=False)
 
-    # (b) nodi espansi, A* contro Dijkstra
+    # (b) A* ammissibile contro Dijkstra
     asse = assi[0][1]
-    trovate = ricerca[ricerca["trovato"]]
-    for posizione, citta in enumerate(sorted(trovate["citta"].unique())):
-        serie = trovate[trovate["citta"] == citta]
-        asse.scatter(serie["dijkstra_espansi"], serie["astar_espansi"], s=22, alpha=0.65,
-                     color=COLORI.get(citta, "#666"), marker=MARCATORI.get(citta, "^"),
-                     label=citta.capitalize())
-    limite = [1, float(max(trovate["dijkstra_espansi"].max(), 1))]
-    asse.plot(limite, limite, color="#555", linewidth=1, linestyle=":", label="nessun risparmio")
-    asse.set_xscale("log"); asse.set_yscale("log")
-    asse.set_xlabel("Stati espansi da Dijkstra"); asse.set_ylabel("Stati espansi da A*")
-    asse.set_title("(b) Effetto dell'euristica geografica", fontsize=10)
-    asse.grid(True, which="both", linewidth=0.4, alpha=0.35); asse.set_axisbelow(True)
+    for citta in citta_elenco:
+        astar = _per_variante(ricerca, citta, "astar_ammissibile")
+        dijkstra = _per_variante(ricerca, citta, "dijkstra")
+        comuni = astar.index.intersection(dijkstra.index)
+        risolte = astar.loc[comuni, "trovato"] & dijkstra.loc[comuni, "trovato"]
+        asse.scatter(dijkstra.loc[comuni][risolte]["espansi"],
+                     astar.loc[comuni][risolte]["espansi"],
+                     s=24, alpha=0.65, color=COLORI.get(citta, "#666"),
+                     marker=MARCATORI.get(citta, "^"), label=citta.capitalize())
+    limiti = asse.get_xlim()
+    asse.plot(limiti, limiti, color="#555", linewidth=1, linestyle=":", label="nessun risparmio")
+    asse.set_xscale("log")
+    asse.set_yscale("log")
+    asse.set_xlabel("Stati espansi da Dijkstra")
+    asse.set_ylabel("Stati espansi da A* ammissibile")
+    asse.set_title("(b) Effetto dell'euristica ammissibile", fontsize=10)
+    asse.grid(True, which="both", linewidth=0.4, alpha=0.35)
+    asse.set_axisbelow(True)
     asse.legend(fontsize=8, frameon=False)
 
-    # (c) distribuzione del risparmio
+    # (c) risparmio a confronto: ammissibile contro non ammissibile
     asse = assi[1][0]
-    dati = [
-        (1 - trovate[trovate["citta"] == c]["astar_espansi"]
-         / trovate[trovate["citta"] == c]["dijkstra_espansi"]) * 100
-        for c in sorted(trovate["citta"].unique())
-    ]
-    parti = asse.boxplot(dati, tick_labels=[c.capitalize() for c in sorted(trovate["citta"].unique())],
-                         patch_artist=True, widths=0.5)
-    for corpo, citta in zip(parti["boxes"], sorted(trovate["citta"].unique())):
-        corpo.set_facecolor(COLORI.get(citta, "#666")); corpo.set_alpha(0.35)
+    etichette, dati, colori = [], [], []
+    for citta in citta_elenco:
+        dijkstra = _per_variante(ricerca, citta, "dijkstra")
+        for variante, suffisso in (
+            ("astar_ammissibile", "V max\n(ammissibile)"),
+            ("astar_p999", "V p99,9\n(NON amm.)"),
+        ):
+            serie = _per_variante(ricerca, citta, variante)
+            comuni = serie.index.intersection(dijkstra.index)
+            risolte = serie.loc[comuni, "trovato"] & dijkstra.loc[comuni, "trovato"]
+            risparmio = (1 - serie.loc[comuni][risolte]["espansi"]
+                         / dijkstra.loc[comuni][risolte]["espansi"]) * 100
+            etichette.append(f"{citta.capitalize()}\n{suffisso}")
+            dati.append(risparmio.to_numpy())
+            colori.append(COLORI.get(citta, "#666"))
+    parti = asse.boxplot(dati, tick_labels=etichette, patch_artist=True, widths=0.55)
+    for corpo, colore, nome in zip(parti["boxes"], colori, etichette):
+        corpo.set_facecolor(colore)
+        corpo.set_alpha(0.5 if "NON" in nome else 0.25)
+        if "NON" in nome:
+            corpo.set_hatch("//")
     asse.axhline(0, color="#555", linewidth=1, linestyle=":")
     asse.set_ylabel("Stati espansi risparmiati (%)")
-    asse.set_title("(c) Risparmio dell'euristica, per query", fontsize=10)
-    asse.grid(True, axis="y", linewidth=0.4, alpha=0.35); asse.set_axisbelow(True)
+    asse.set_title("(c) Risparmio per query. Il tratteggio NON garantisce l'ottimo", fontsize=9)
+    asse.tick_params(axis="x", labelsize=7)
+    asse.grid(True, axis="y", linewidth=0.4, alpha=0.35)
+    asse.set_axisbelow(True)
 
     # (d) costo dei cambi nello stato
     asse = assi[1][1]
-    for citta in sorted(trovate["citta"].unique()):
-        serie = trovate[trovate["citta"] == citta]
-        asse.scatter(serie["proiettato_espansi"], serie["astar_espansi"], s=22, alpha=0.65,
-                     color=COLORI.get(citta, "#666"), marker=MARCATORI.get(citta, "^"),
-                     label=citta.capitalize())
-    limite = [1, float(max(trovate["proiettato_espansi"].max(), 1))]
-    asse.plot(limite, limite, color="#555", linewidth=1, linestyle=":", label="nessun costo")
-    asse.set_xscale("log"); asse.set_yscale("log")
+    for citta in citta_elenco:
+        esteso = _per_variante(ricerca, citta, "astar_ammissibile")
+        proiettato = _per_variante(ricerca, citta, "astar_cambi_proiettati")
+        comuni = esteso.index.intersection(proiettato.index)
+        risolte = esteso.loc[comuni, "trovato"] & proiettato.loc[comuni, "trovato"]
+        asse.scatter(proiettato.loc[comuni][risolte]["espansi"],
+                     esteso.loc[comuni][risolte]["espansi"],
+                     s=24, alpha=0.65, color=COLORI.get(citta, "#666"),
+                     marker=MARCATORI.get(citta, "^"), label=citta.capitalize())
+    limiti = asse.get_xlim()
+    asse.plot(limiti, limiti, color="#555", linewidth=1, linestyle=":", label="nessun costo")
+    asse.set_xscale("log")
+    asse.set_yscale("log")
     asse.set_xlabel("Stati espansi con i cambi proiettati via")
     asse.set_ylabel("Stati espansi con i cambi nello stato")
-    asse.set_title("(d) Costo dei cambi nello stato", fontsize=10)
-    asse.grid(True, which="both", linewidth=0.4, alpha=0.35); asse.set_axisbelow(True)
+    asse.set_title("(d) Cambi nello stato: costa 3x, ma la proiezione sbaglia", fontsize=9)
+    asse.grid(True, which="both", linewidth=0.4, alpha=0.35)
+    asse.set_axisbelow(True)
     asse.legend(fontsize=8, frameon=False)
 
+    risolte_totali = int(
+        ricerca[(ricerca["variante"] == "astar_ammissibile") & ricerca["trovato"]].shape[0]
+    )
+    interrogazioni = int(ricerca["coppia"].max()) * len(citta_elenco)
     figura.suptitle(
         "Ricerca di itinerari: costo del grafo ed effetto dell'euristica\n"
-        f"{len(trovate)} query risolte, finestra di {ORIZZONTE} minuti, partenza alle "
-        f"{ORA_PARTENZA:02d}:00",
+        f"{risolte_totali} query risolte su {interrogazioni}, finestra di {ORIZZONTE} minuti, "
+        f"partenza alle {ORA_PARTENZA:02d}:00",
         fontsize=11,
     )
     figura.tight_layout(rect=(0, 0, 1, 0.93))
     destinazione.parent.mkdir(parents=True, exist_ok=True)
     figura.savefig(destinazione, dpi=150)
     plt.close(figura)
+
+
+def riassumi(ricerca: pd.DataFrame) -> None:
+    """Stampa media e deviazione standard per ogni variante e citta'."""
+    for citta in sorted(ricerca["citta"].unique()):
+        dijkstra = _per_variante(ricerca, citta, "dijkstra")
+        totale = int(dijkstra.shape[0])
+        print(f"\n  {citta}:")
+        for variante in ("astar_ammissibile", "dijkstra", "astar_cambi_proiettati", "astar_p999"):
+            serie = _per_variante(ricerca, citta, variante)
+            comuni = serie.index.intersection(dijkstra.index)
+            risolte = serie.loc[comuni, "trovato"] & dijkstra.loc[comuni, "trovato"]
+            selezione = serie.loc[comuni][risolte]
+            confronto = dijkstra.loc[comuni][risolte]
+            risparmio = (1 - selezione["espansi"] / confronto["espansi"]) * 100
+            marchio = "" if bool(serie["ammissibile"].iloc[0]) else "   [NON AMMISSIBILE]"
+            print(f"    {variante}{marchio}")
+            print(f"      V usata              : {serie['velocita_m_s'].iloc[0]:.2f} m/s "
+                  f"({serie['tipo_velocita'].iloc[0]})")
+            print(f"      stati espansi        : {selezione['espansi'].mean():>10,.0f} "
+                  f"+/- {selezione['espansi'].std():,.0f}")
+            print(f"      secondi              : {selezione['secondi'].mean():>10.3f} "
+                  f"+/- {selezione['secondi'].std():.3f}")
+            print(f"      risparmio su Dijkstra: {risparmio.mean():>9.1f}% "
+                  f"+/- {risparmio.std():.1f}%")
+            non_ottime = int((selezione["ottimo"] == False).sum())  # noqa: E712
+            print(f"      query NON ottime     : {non_ottime} su {len(selezione)}")
+        risolte_tot = int(dijkstra["trovato"].sum())
+        print(f"    coppie risolte nella finestra: {risolte_tot}/{totale} "
+              f"({risolte_tot / totale:.0%})")
+        pareto = _per_variante(ricerca, citta, "pareto")
+        soluzioni = pareto[pareto["trovato"]]["pareto_soluzioni"]
+        print(f"    soluzioni di Pareto          : {soluzioni.mean():.2f} "
+              f"+/- {soluzioni.std():.2f}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -263,7 +384,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         grafo = costruisci(archivio, citta, giorno, inizio, ORIZZONTE)
         print(f"  ricerca su {argomenti.coppie} coppie...", flush=True)
         righe_ricerca.extend(
-            misura_ricerca(citta, grafo, inizio, misura["massimo_m_s"], argomenti.coppie)
+            misura_ricerca(
+                citta, grafo, inizio, misura["massimo_m_s"], misura["p999"], argomenti.coppie
+            )
         )
 
     grafo_df = pd.DataFrame(righe_grafo)
@@ -274,28 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     disegna(ricerca_df, grafo_df, RISULTATI / "ricerca_astar.png")
 
     print("\n=== Sintesi (media +/- dev.std) ===")
-    for citta in sorted(ricerca_df["citta"].unique()):
-        serie = ricerca_df[(ricerca_df["citta"] == citta) & ricerca_df["trovato"]]
-        totale = int((ricerca_df["citta"] == citta).sum())
-        risparmio = (1 - serie["astar_espansi"] / serie["dijkstra_espansi"]) * 100
-        costo_cambi = serie["astar_espansi"] / serie["proiettato_espansi"]
-        print(f"  {citta}:")
-        print(f"    coppie risolte nella finestra : {len(serie)}/{totale} "
-              f"({len(serie) / totale:.0%})")
-        print(f"    stati espansi A*              : {serie['astar_espansi'].mean():>10,.0f} "
-              f"+/- {serie['astar_espansi'].std():,.0f}")
-        print(f"    stati espansi Dijkstra        : {serie['dijkstra_espansi'].mean():>10,.0f} "
-              f"+/- {serie['dijkstra_espansi'].std():,.0f}")
-        print(f"    risparmio dell'euristica      : {risparmio.mean():>9.1f}% "
-              f"+/- {risparmio.std():.1f}%")
-        print(f"    tempo A*                      : {serie['astar_secondi'].mean():>10.3f} s "
-              f"+/- {serie['astar_secondi'].std():.3f}")
-        print(f"    tempo Dijkstra                : {serie['dijkstra_secondi'].mean():>10.3f} s "
-              f"+/- {serie['dijkstra_secondi'].std():.3f}")
-        print(f"    cambi nello stato, fattore    : {costo_cambi.mean():>10.2f}x "
-              f"+/- {costo_cambi.std():.2f}")
-        print(f"    soluzioni di Pareto           : {serie['pareto_soluzioni'].mean():>10.2f} "
-              f"+/- {serie['pareto_soluzioni'].std():.2f}")
+    riassumi(ricerca_df)
     return 0
 
 

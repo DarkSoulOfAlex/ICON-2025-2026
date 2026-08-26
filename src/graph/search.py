@@ -106,7 +106,7 @@ class EsitoRicerca:
         return None if self.orario_arrivo is None else self.orario_arrivo / 60.0
 
 
-def _chiave(grafo: Grafo, stato: Stato, con_cambi: bool) -> tuple:
+def _chiave(grafo: Grafo, stato: Stato, con_cambi: bool, con_istante: bool = False) -> tuple:
     """Chiave con cui uno stato viene considerato gia' visitato.
 
     Per uno stato a terra la chiave **non contiene l'istante**, e la ragione e'
@@ -128,6 +128,10 @@ def _chiave(grafo: Grafo, stato: Stato, con_cambi: bool) -> tuple:
     """
     if isinstance(stato, ABordo):
         base = ("b", stato.evento)
+    elif con_istante:
+        # Formulazione storica, conservata perche' il documento riporta quanto
+        # costava: senza di essa quel numero non sarebbe piu' riproducibile.
+        base = ("t", stato.fermata, stato.istante)
     else:
         base = ("t", stato.fermata)
     return base + ((stato.cambi,) if con_cambi else ())
@@ -142,6 +146,7 @@ def cerca_primo_arrivo(
     con_euristica: bool = True,
     cambi_nello_stato: bool = True,
     cambi_massimi: int = 4,
+    istante_nella_chiave: bool = False,
 ) -> EsitoRicerca:
     """A* sul primo orario di arrivo. Con ``con_euristica=False`` e' Dijkstra.
 
@@ -168,13 +173,13 @@ def cerca_primo_arrivo(
     # riproducibile il conteggio dei nodi espansi.
     ordine = 0
     coda: list[tuple[float, int, int, Stato]] = [(partenza + h(iniziale), partenza, 0, iniziale)]
-    migliore: dict[tuple, int] = {_chiave(grafo, iniziale, cambi_nello_stato): partenza}
+    migliore: dict[tuple, int] = {_chiave(grafo, iniziale, cambi_nello_stato, istante_nella_chiave): partenza}
     precedente: dict[tuple, Stato] = {}
     espansi = generati = 0
 
     while coda:
         _stima, costo, _ordine, stato = heapq.heappop(coda)
-        chiave = _chiave(grafo, stato, cambi_nello_stato)
+        chiave = _chiave(grafo, stato, cambi_nello_stato, istante_nella_chiave)
         if costo > migliore.get(chiave, costo):
             continue
         espansi += 1
@@ -187,14 +192,14 @@ def cerca_primo_arrivo(
                 stati_espansi=espansi,
                 stati_generati=generati,
                 tempo_secondi=perf_counter() - inizio,
-                cammino=_ricostruisci(precedente, grafo, stato, cambi_nello_stato),
+                cammino=_ricostruisci(precedente, grafo, stato, cambi_nello_stato, istante_nella_chiave),
             )
 
         for successivo, arrivo in grafo.successori(stato):
             generati += 1
             if arrivo > grafo.fine or successivo.cambi > cambi_massimi:
                 continue
-            chiave_succ = _chiave(grafo, successivo, cambi_nello_stato)
+            chiave_succ = _chiave(grafo, successivo, cambi_nello_stato, istante_nella_chiave)
             if arrivo < migliore.get(chiave_succ, 1 << 62):
                 migliore[chiave_succ] = arrivo
                 precedente[chiave_succ] = stato
@@ -212,12 +217,13 @@ def cerca_primo_arrivo(
 
 
 def _ricostruisci(
-    precedente: dict[tuple, Stato], grafo: Grafo, finale: Stato, con_cambi: bool
+    precedente: dict[tuple, Stato], grafo: Grafo, finale: Stato, con_cambi: bool,
+    con_istante: bool = False,
 ) -> list[Stato]:
     cammino = [finale]
     corrente = finale
     for _ in range(10_000):  # limite di sicurezza contro un ciclo imprevisto
-        chiave = _chiave(grafo, corrente, con_cambi)
+        chiave = _chiave(grafo, corrente, con_cambi, con_istante)
         if chiave not in precedente:
             break
         corrente = precedente[chiave]

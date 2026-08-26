@@ -96,6 +96,17 @@ class Distribuzione(ABC):
     def media(self) -> float:
         """Valore atteso del ritardo."""
 
+    def cdf_vettoriale(self, valori: np.ndarray) -> np.ndarray:
+        """Funzione di ripartizione su un vettore di valori.
+
+        Esiste perche' la convoluzione numerica della Fase 4 valuta la
+        ripartizione su griglie di migliaia di punti, e farlo un valore alla
+        volta costerebbe secondi per ogni itinerario. L'implementazione
+        predefinita cicla; le sottoclassi che possono fare di meglio la
+        sovrascrivono.
+        """
+        return np.array([self.cdf(float(v)) for v in np.asarray(valori)], dtype=float)
+
 
 class ModelloRitardo(ABC):
     """Contratto di un modello dei ritardi."""
@@ -185,6 +196,27 @@ class LogNormaleTraslata(Distribuzione):
     def media(self) -> float:
         return self.spostamento + math.exp(self.mu + self.sigma**2 / 2.0)
 
+    def cdf_vettoriale(self, valori: np.ndarray) -> np.ndarray:
+        """Versione vettorializzata, con ripiego se scipy non e' disponibile.
+
+        L'importazione e' locale e protetta perche' questo modulo deve restare
+        importabile anche sulla VM di raccolta, dove scipy non e' installato:
+        li' non serve la convoluzione, ma serve l'interfaccia.
+        """
+        scarti = np.asarray(valori, dtype=float) - self.spostamento
+        risultato = np.zeros_like(scarti)
+        positivi = scarti > 0
+        if not positivi.any():
+            return risultato
+        z = (np.log(scarti[positivi]) - self.mu) / self.sigma
+        try:
+            from scipy.special import ndtr
+
+            risultato[positivi] = ndtr(z)
+        except ImportError:  # pragma: no cover - dipende dall'ambiente
+            risultato[positivi] = [0.5 * (1.0 + math.erf(v / math.sqrt(2.0))) for v in z]
+        return risultato
+
 
 class Empirica(Distribuzione):
     """Distribuzione definita da un campione di ritardi osservati.
@@ -232,9 +264,32 @@ class ModelloSintetico(ModelloRitardo):
     sintetico = True
     nome = "sintetico"
 
-    def __init__(self, seme: int = 20260826, intensita: float = 1.0) -> None:
+    def __init__(
+        self,
+        seme: int = 20260826,
+        intensita: float = 1.0,
+        correlazione: float = 0.7,
+    ) -> None:
+        """``correlazione`` governa quanto il ritardo a monte si trasmette a valle.
+
+        E' un **parametro** e non una costante cablata, per due ragioni. La prima
+        e' che in Fase 3 il modello appreso avra' la correlazione che i dati
+        mostrano, che potrebbe essere molto diversa da quella che inventiamo
+        adesso: cablarla qui significherebbe scrivere il resto del progetto
+        attorno a un numero senza fondamento. La seconda e' che questa e' la leva
+        con cui si controlla quanto due itinerari diversi si distinguano fra loro:
+        a correlazione nulla i ritardi si azzerano a ogni fermata e ogni
+        itinerario si somiglia, a correlazione unitaria un ritardo iniziale si
+        trascina per l'intera corsa.
+
+        ``intensita`` scala la dispersione: e' l'altra leva, quella che decide
+        quanto conti la varianza rispetto alla media nella scelta dell'itinerario.
+        """
+        if not 0.0 <= correlazione <= 1.0:
+            raise ValueError("la correlazione deve stare in [0, 1]")
         self.seme = int(seme)
         self.intensita = float(intensita)
+        self.correlazione = float(correlazione)
 
     def _ora_locale(self, orario_programmato: int) -> int:
         # Ora del giorno in UTC: basta a distinguere punta e morbida, e non
@@ -255,6 +310,17 @@ class ModelloSintetico(ModelloRitardo):
         mu += 0.02 * min(tratta.stop_sequence, 40)
         # L'anticipo possibile e' limitato: un mezzo non parte prima dell'orario.
         spostamento = -90.0
+
+        # Correlazione lungo la corsa. Un mezzo gia' in ritardo a monte tende a
+        # restarlo: la quota `correlazione` del ritardo osservato viene
+        # trasferita nella posizione della distribuzione a valle, e la
+        # dispersione residua si riduce di conseguenza, perche' sapere dove si
+        # trova il mezzo riduce l'incertezza su dove sara'.
+        if tratta.ritardo_a_monte is not None and self.correlazione > 0.0:
+            trasferito = self.correlazione * float(tratta.ritardo_a_monte)
+            spostamento += trasferito
+            sigma *= max(1e-3, math.sqrt(1.0 - self.correlazione**2))
+
         return LogNormaleTraslata(mu=mu, sigma=sigma, spostamento=spostamento)
 
 

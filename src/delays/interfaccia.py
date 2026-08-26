@@ -26,7 +26,9 @@ peggio di nessun risultato.
 
 from __future__ import annotations
 
+import hashlib
 import math
+import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Sequence
@@ -300,9 +302,7 @@ class ModelloSintetico(ModelloRitardo):
         ora = self._ora_locale(tratta.orario_programmato)
         di_punta = ora in (7, 8, 9, 17, 18, 19)
 
-        # Un numero stabile in [0, 1) derivato dalla linea, per dare a linee
-        # diverse comportamenti diversi ma riproducibili.
-        impronta = (hash((self.seme, tratta.route_id)) & 0xFFFF) / 0xFFFF
+        impronta = _impronta_stabile(self.seme, tratta.route_id)
 
         mu = math.log(60.0 + 120.0 * impronta) + (0.4 if di_punta else 0.0)
         sigma = (0.5 + 0.4 * impronta + (0.3 if di_punta else 0.0)) * self.intensita
@@ -342,6 +342,22 @@ class ModelloNullo(ModelloRitardo):
 # =============================================================================
 # Utilita'
 # =============================================================================
+
+
+def _impronta_stabile(seme: int, chiave: str) -> float:
+    """Un numero in [0, 1) derivato da una stringa, stabile fra esecuzioni.
+
+    NON si usa la ``hash`` incorporata: Python randomizza l'hash delle stringhe a
+    ogni processo, quindi lo stesso identificativo di linea produrrebbe parametri
+    diversi a ogni esecuzione. Il modello sintetico si dichiara deterministico dato
+    un seme, e con la hash incorporata non lo sarebbe: gli esperimenti non
+    sarebbero riproducibili, e il difetto si manifesterebbe solo come risultati
+    che cambiano senza motivo apparente fra un'esecuzione e l'altra.
+    """
+    digesto = hashlib.blake2b(
+        f"{seme}:{chiave}".encode("utf-8"), digest_size=4
+    ).digest()
+    return struct.unpack("<I", digesto)[0] / 0x1_0000_0000
 
 
 def _erfinv(x: float) -> float:

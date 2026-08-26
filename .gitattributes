@@ -2,3 +2,12 @@
 # schtasks rifiuta un XML in UTF-8. Trattarlo come binario impedisce a git di
 # normalizzare i fine riga, cosa che ne corromperebbe la codifica.
 docs/collector_windows.xml -text
+
+# Gli script di shell e le unit systemd devono avere fine riga LF anche nella
+# copia di lavoro su Windows. Non basta che il repository le conservi cosi': il
+# README_DEPLOY prevede la possibilita' di copiare il progetto sulla VM con tar
+# direttamente dalla cartella di lavoro, e un file .sh con CRLF fallirebbe su
+# Linux con "bad interpreter: ...^M", che e' un errore particolarmente ostico da
+# interpretare per chi non lo ha mai visto.
+*.sh text eol=lf
+*.service text eol=lf

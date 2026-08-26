@@ -1,0 +1,43 @@
+# Dipendenze della sola macchina di RACCOLTA (VM Ubuntu 24.04, aarch64).
+#
+# Non e' il requirements.txt del progetto: la VM esegue soltanto il collector e
+# il consolidamento notturno, mentre esperimenti, test e scrittura del documento
+# restano sulla macchina di analisi. Qui mancano di proposito clingo,
+# scikit-learn, matplotlib, scipy e pytest, che sulla VM non servirebbero a nulla
+# e costerebbero tempo di installazione e spazio.
+#
+# Le versioni sono IDENTICHE a quelle di requirements.txt. E' stato verificato
+# che esistano tutte come wheel precompilate per CPython 3.12 su aarch64:
+#
+#   PyYAML                 cp312-cp312-manylinux2014_aarch64
+#   protobuf               cp310-abi3-manylinux2014_aarch64   (abi3, vale su 3.12)
+#   gtfs-realtime-bindings py3-none-any
+#   pandas                 cp312-cp312-manylinux_2_24_aarch64
+#   pyarrow                cp312-cp312-manylinux_2_28_aarch64
+#   numpy                  cp312-cp312-manylinux_2_27_aarch64
+#
+# Il tag piu' restrittivo e' manylinux_2_28, che richiede glibc >= 2.28: Ubuntu
+# 24.04 ha la 2.39, quindi il vincolo e' soddisfatto con margine.
+#
+# Installare sempre con:  pip install --only-binary=:all: -r requirements-collector.txt
+# Il flag trasforma l'assenza di una wheel in un errore immediato invece che in
+# una compilazione da sorgente, che su una VM senza toolchain fallirebbe dopo
+# minuti di attesa.
+
+# --- Necessarie al collector -------------------------------------------------
+# Sono le uniche tre che poll_realtime.py importa oltre alla libreria standard.
+PyYAML==6.0.3
+protobuf==7.36.0
+gtfs-realtime-bindings==2.2.0
+
+# --- Necessarie al consolidamento notturno -----------------------------------
+# Installate fin da subito per non dover rifare l'ambiente quando il
+# consolidamento entrera' in servizio.
+pandas==3.0.5
+pyarrow==25.0.1
+numpy==2.5.2
+
+# NOTA su tzdata. Su Windows serve esplicitamente, perche' il sistema non
+# include il database IANA dei fusi orari; su Linux quel database e' di sistema
+# e zoneinfo lo trova da solo. Non e' quindi elencato qui: arriva comunque come
+# dipendenza di pandas, ed e' innocuo.

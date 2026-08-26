@@ -12,6 +12,13 @@ data/raw/gtfs/*
 data/processed/*
 !data/processed/.gitkeep
 
+# --- Deploy ---------------------------------------------------------------------
+# Non e' il meccanismo che usiamo (l'indirizzo della VM sta in ~/.ssh/config,
+# fuori dal repository, quindi non puo' finirci dentro per costruzione), ma se
+# qualcuno creasse questo file per altri motivi non deve essere versionato: il
+# repository viene consegnato al docente.
+deploy/vm.env
+
 # --- Log ----------------------------------------------------------------------
 logs/*
 !logs/.gitkeep

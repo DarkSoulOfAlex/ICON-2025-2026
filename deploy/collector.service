@@ -1,0 +1,66 @@
+# Unit systemd per la raccolta dei feed GTFS Real-Time.
+#
+# Questo file e' un MODELLO: i segnaposto @UTENTE@ e @RADICE@ vengono sostituiti
+# da deploy/install.sh con l'utente e il percorso reali al momento
+# dell'installazione. E' preferibile a percorsi fissi perche' il repository puo'
+# essere clonato ovunque, e un percorso sbagliato dentro una unit fallisce in un
+# modo poco leggibile.
+#
+# La copia installata sta in /etc/systemd/system/collector-tpl.service.
+
+[Unit]
+Description=Raccolta GTFS Real-Time per il progetto ICon (Roma e Torino)
+Documentation=file://@RADICE@/deploy/README_DEPLOY.md
+
+# La raccolta ha senso solo con la rete gia' configurata. network-online.target
+# attende un indirizzo assegnato, mentre network.target si accontenta che lo
+# stack sia caricato: sulla seconda il primo giro fallirebbe a ogni riavvio.
+After=network-online.target
+Wants=network-online.target
+
+# Senza questo, systemd smette di riavviare un servizio che fallisce troppo
+# spesso in poco tempo. Per una raccolta che deve durare settimane, arrendersi
+# non e' mai la risposta giusta: meglio continuare a ritentare ogni 30 secondi.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@UTENTE@
+Group=@UTENTE@
+WorkingDirectory=@RADICE@
+ExecStart=@RADICE@/.venv/bin/python -m src.collector.poll_realtime
+
+# Il collector sopravvive da solo agli errori di rete; Restart=always copre cio'
+# che non puo' gestire: un OOM, un riavvio della VM, una terminazione esterna.
+Restart=always
+RestartSec=30
+
+# Uscita ordinata: il collector intercetta SIGTERM ed esce fra un giro e l'altro,
+# senza lasciare file .pb scritti a meta'. I 90 secondi coprono con margine il
+# caso peggiore, cioe' un giro con tutti i timeout scaduti.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+# Il log va su journald. Resta comunque anche in logs/collector.log, che il
+# collector scrive per conto proprio con rotazione.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=collector-tpl
+
+# Irrigidimenti minimi. Deliberatamente minimi: su una VM dedicata a un solo
+# compito il guadagno di sicurezza di misure piu' aggressive e' modesto, mentre
+# un servizio che non riesce a scrivere costa ore di raccolta e si diagnostica
+# male. In particolare NON si usa ProtectHome, perche' il repository sta sotto
+# /home e la combinazione con ReadWritePaths, pur corretta, e' una fonte di
+# guasti difficili da leggere.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=@RADICE@
+
+[Install]
+# multi-user.target e non default.target: il servizio deve partire all'avvio
+# della macchina, senza che nessuno faccia login. E' esattamente il problema che
+# aveva la raccolta su Windows, dove il compito pianificato dipendeva
+# dall'accesso dell'utente.
+WantedBy=multi-user.target

@@ -11,3 +11,4 @@ docs/collector_windows.xml -text
 # interpretare per chi non lo ha mai visto.
 *.sh text eol=lf
 *.service text eol=lf
+*.timer text eol=lf

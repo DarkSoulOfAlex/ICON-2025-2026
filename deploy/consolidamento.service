@@ -1,0 +1,35 @@
+# Consolidamento notturno dei dump del giorno precedente.
+#
+# Modello: @UTENTE@ e @RADICE@ vengono sostituiti da deploy/install.sh.
+# Type=oneshot perche' e' un lavoro che finisce, non un servizio che resta vivo:
+# il timer lo fa ripartire il giorno dopo.
+
+[Unit]
+Description=Consolidamento notturno dei dump GTFS Real-Time
+Documentation=file://@RADICE@/deploy/README_DEPLOY.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@UTENTE@
+Group=@UTENTE@
+WorkingDirectory=@RADICE@
+ExecStart=@RADICE@/.venv/bin/python -m src.consolida.notturno
+
+# Una giornata di Roma sono decine di milioni di osservazioni: il lavoro puo'
+# durare parecchi minuti, e interromperlo a meta' lascerebbe un parquet parziale.
+TimeoutStartSec=3600
+
+# Priorita' bassa su CPU e disco: la raccolta real-time gira in parallelo e non
+# deve perdere un giro perche' il consolidamento sta leggendo migliaia di file.
+Nice=10
+IOSchedulingClass=idle
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=consolida-tpl
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=@RADICE@

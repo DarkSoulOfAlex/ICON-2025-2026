@@ -1,0 +1,23 @@
+# Fa scattare il consolidamento alle quattro del mattino, ora locale della VM.
+#
+# L'ora non e' casuale: il servizio notturno di entrambe le citta' e' terminato,
+# quindi il giorno precedente e' davvero chiuso, e nessuno sta usando la macchina.
+
+[Unit]
+Description=Consolidamento notturno dei dump GTFS Real-Time
+Requires=consolida-tpl.service
+
+[Timer]
+Unit=consolida-tpl.service
+OnCalendar=*-*-* 04:00:00
+
+# Se la VM era spenta all'ora prevista, il lavoro parte al primo avvio utile
+# invece di essere saltato: un giorno non consolidato resterebbe tale per sempre.
+Persistent=true
+
+# Sfasa l'avvio di qualche minuto a caso. Serve a non far coincidere il picco di
+# I/O con l'istante esatto in cui il collector interroga i feed.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

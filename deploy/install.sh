@@ -14,6 +14,7 @@
 set -euo pipefail
 
 NOME_SERVIZIO="collector-tpl"
+NOME_CONSOLIDA="consolida-tpl"
 UNIT_INSTALLATA="/etc/systemd/system/${NOME_SERVIZIO}.service"
 PYTHON_MINIMO="3.11"
 
@@ -143,9 +144,30 @@ else
     "${COME_ROOT[@]}" install -m 0644 "${TEMPORANEA}" "${UNIT_INSTALLATA}"
 fi
 
+# Consolidamento notturno: servizio one-shot piu' il timer che lo fa scattare.
+# Vengono installati sempre, ma il timer si abilita solo se le unit esistono, cosi'
+# lo script resta utilizzabile anche su un repository che non le contenga ancora.
+for MODELLO in "${RADICE}/deploy/consolidamento.service:${NOME_CONSOLIDA}.service"                "${RADICE}/deploy/consolidamento.timer:${NOME_CONSOLIDA}.timer"; do
+    SORGENTE="${MODELLO%%:*}"
+    NOME_FILE="${MODELLO##*:}"
+    [[ -f "${SORGENTE}" ]] || continue
+    sed -e "s|@RADICE@|${RADICE}|g" -e "s|@UTENTE@|${UTENTE}|g" "${SORGENTE}" > "${TEMPORANEA}"
+    if [[ -f "/etc/systemd/system/${NOME_FILE}" ]] && "${COME_ROOT[@]}" cmp -s "${TEMPORANEA}" "/etc/systemd/system/${NOME_FILE}"; then
+        echo "  ${NOME_FILE} gia' aggiornata"
+    else
+        echo "  scrivo /etc/systemd/system/${NOME_FILE}"
+        "${COME_ROOT[@]}" install -m 0644 "${TEMPORANEA}" "/etc/systemd/system/${NOME_FILE}"
+    fi
+done
+
 "${COME_ROOT[@]}" systemctl daemon-reload
 "${COME_ROOT[@]}" systemctl enable "${NOME_SERVIZIO}" >/dev/null
-echo "  servizio abilitato all'avvio della macchina"
+echo "  servizio di raccolta abilitato all'avvio della macchina"
+
+if [[ -f "/etc/systemd/system/${NOME_CONSOLIDA}.timer" ]]; then
+    "${COME_ROOT[@]}" systemctl enable --now "${NOME_CONSOLIDA}.timer" >/dev/null
+    echo "  timer del consolidamento abilitato (04:00, con recupero se la VM era spenta)"
+fi
 
 # =============================================================================
 titolo "Esito"

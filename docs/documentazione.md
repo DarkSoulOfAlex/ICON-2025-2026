@@ -580,3 +580,350 @@ riducendo il costo di un ordine di grandezza, e calcolarla soltanto quando serva
 davvero. Il fatto che questa scelta si possa compiere a valle, senza riformulare
 le regole ma disattivando un interruttore, e' una conseguenza diretta della
 natura dichiarativa della rappresentazione.
+
+---
+
+## Ricerca di itinerari
+
+### Che cosa si cerca, e perche' non e' un cammino minimo
+
+La domanda a cui il pianificatore deve rispondere non e' "qual e' il percorso piu'
+corto fra A e B" ma "partendo da A alle otto, qual e' il primo momento in cui
+posso essere in B". La differenza non e' di formulazione: nel trasporto pubblico
+il costo di un arco dipende dall'istante in cui lo si percorre, perche' fra una
+corsa e la successiva si aspetta, e un cammino minimo su un grafo statico non ha
+modo di rappresentarlo.
+
+La rappresentazione adottata e' il **grafo tempo-espanso**, in cui i nodi non sono
+le fermate ma gli **eventi**: ogni passaggio di una corsa a una fermata, con il
+suo orario. Muoversi nel grafo significa muoversi nel tempo oltre che nello
+spazio, e attendere a una fermata diventa semplicemente non fare nulla mentre il
+tempo passa.
+
+Il costo che si minimizza e' l'**orario di arrivo**, non la durata del viaggio.
+E' una scelta con una conseguenza precisa: partire piu' tardi non e' peggio se si
+arriva prima. Minimizzando la durata si preferirebbe un viaggio di venti minuti
+che parte fra due ore a uno di venticinque che parte adesso, il che non e' quello
+che chiede chi sta alla fermata.
+
+### Lo stato, e perche' la terna non basta
+
+Lo stato della ricerca e' la terna `(fermata, istante, cambi effettuati)`, ma la
+terna da sola non e' sufficiente a contare correttamente i cambi, e vale la pena
+spiegare perche' perche' l'errore e' seducente.
+
+Stando a una fermata a un dato istante, "restare a bordo" e "salire di nuovo"
+sono situazioni indistinguibili se non si sa su quale corsa ci si trovi. Un
+viaggiatore che percorre dieci fermate senza mai scendere passerebbe per dieci
+stati successivi, ciascuno dei quali sembrerebbe una salita, e la ricerca gli
+attribuirebbe dieci cambi. Il conteggio dei cambi, che e' uno dei tre criteri
+della ricerca multi-criterio, sarebbe sistematicamente sbagliato senza che nulla
+lo segnali.
+
+Lo stato si sdoppia percio' in due forme che condividono la terna come parte
+osservabile. **A terra** si e' a una fermata, a un certo istante, dopo un certo
+numero di cambi, e da li' si puo' salire su una corsa, trasbordare verso una
+fermata vicina o camminare. **A bordo** si e' su una corsa specifica, appena
+arrivati a un suo passaggio, e da li' si puo' proseguire senza cambiare oppure
+scendere. L'identita' della corsa e' l'unica informazione aggiuntiva rispetto
+alla terna, ed e' quella che rende il conteggio corretto per costruzione anziche'
+per convenzione.
+
+Il cambio si conta alla **salita** e non alla discesa. Scendere a destinazione
+altrimenti costerebbe un cambio che il viaggiatore non percepisce, e due
+itinerari identici tranne che per la fermata finale risulterebbero diversi su un
+criterio.
+
+### La finestra temporale
+
+Il grafo non copre la giornata ma un intervallo che parte dall'orario di partenza
+richiesto e dura un orizzonte prefissato, per impostazione predefinita due ore.
+La ragione e' di dimensione: l'orario di Roma contiene 5,6 milioni di passaggi al
+giorno, e il grafo dell'intera giornata non e' un oggetto che si costruisca per
+rispondere a una singola interrogazione.
+
+La finestra non e' solo un espediente: e' anche cio' che una interrogazione usa
+davvero, perche' nessuno accetta di attendere quattro ore alla fermata. Il prezzo
+va comunque dichiarato, ed e' una limitazione dei risultati e non una nota
+implementativa: **la ricerca trova l'ottimo dentro la finestra**, e un itinerario
+che richiedesse di attendere oltre l'orizzonte non verrebbe trovato affatto. La
+sezione dei risultati riporta su quante delle coppie origine-destinazione
+esaminate la finestra di due ore si sia rivelata sufficiente.
+
+### L'euristica geografica e la sua ammissibilita'
+
+La ricerca mono-criterio usa A* con l'euristica
+
+    h(n) = distanza in linea d'aria fra la fermata di n e la destinazione
+           ----------------------------------------------------------------
+                        velocita' massima della rete
+
+**Dimostrazione di ammissibilita'.** Sia `n` uno stato la cui fermata dista `d`
+metri in linea d'aria dalla destinazione, e sia `V` la velocita' massima fra due
+fermate consecutive presente nell'orario. Ogni itinerario che porti da `n` alla
+destinazione e' una successione finita di spostamenti fra fermate. La somma delle
+loro lunghezze non puo' essere inferiore a `d`, perche' il segmento e' il cammino
+piu' breve fra due punti del piano e la spezzata che li congiunge e' almeno
+altrettanto lunga. Ciascuno di quegli spostamenti impiega almeno la propria
+lunghezza divisa `V`, perche' `V` e' per costruzione un limite superiore alla
+velocita' di ogni spostamento della rete. Il tempo residuo reale e' percio'
+almeno `d / V`, che e' il valore restituito dall'euristica. Le attese alle
+fermate e i tempi minimi di trasbordo si sommano a quel tempo e possono solo
+aumentarlo, quindi non intaccano il limite. L'euristica non sovrastima mai il
+costo residuo: e' ammissibile, e A* restituisce percio' l'ottimo.
+
+L'euristica e' inoltre **consistente**, perche' e' della forma `d(x)/V` con `d`
+distanza euclidea, che soddisfa la disuguaglianza triangolare: per ogni arco da
+`x` a `y` di costo `c` vale `h(x) <= c + h(y)`. Con un'euristica consistente ogni
+stato viene estratto dalla coda gia' con il suo costo definitivo, e non e'
+necessario riaprirlo.
+
+La dimostrazione e' verificata anche per campionamento: un test estrae stati a
+caso, calcola il costo residuo reale con una ricerca esaustiva e controlla che
+l'euristica non lo superi mai. Un'euristica non ammissibile non solleverebbe
+alcun errore e non rallenterebbe nulla: restituirebbe semplicemente itinerari
+peggiori, in silenzio.
+
+### La frontiera di Pareto, e perche' non esiste un itinerario ottimo
+
+La ricerca multi-criterio valuta ogni itinerario su tre grandezze: orario di
+arrivo, numero di cambi e minuti trascorsi a piedi. Non esiste un modo oggettivo
+di ridurle a una sola, perche' cio' richiederebbe di decidere quanto valga un
+cambio espresso in minuti, e la risposta dipende da chi viaggia: chi porta una
+valigia, chi ha poco tempo e chi ha difficolta' motorie darebbero tre risposte
+diverse. Un itinerario che arriva cinque minuti prima ma con un cambio in piu'
+non e' migliore ne' peggiore: e' semplicemente un altro compromesso.
+
+Cio' che si puo' dire in modo oggettivo e' quali itinerari siano **dominati**: un
+itinerario e' dominato se ne esiste un altro non peggiore su tutti e tre i criteri
+e strettamente migliore su almeno uno. Gli itinerari non dominati formano la
+frontiera di Pareto, e la ricerca restituisce quella, lasciando la scelta finale a
+chi viaggia.
+
+La disuguaglianza stretta su almeno un criterio non e' un dettaglio formale: senza
+di essa due itinerari identici si domanderebbero a vicenda e la frontiera si
+svuoterebbe. E' una delle proprieta' collaudate dai test, insieme al fatto che
+nessuna soluzione della frontiera sia dominata da un'altra e che l'ottimo
+mono-criterio compaia sempre fra le soluzioni non dominate.
+
+### Il costo del grafo
+
+Tabella 6 - Dimensione del grafo tempo-espanso al crescere della finestra,
+partenza alle 08:00. Media su tre costruzioni indipendenti; eventi e archi sono
+grandezze deterministiche, quindi la loro deviazione standard e' nulla per
+costruzione e la variabilita' sta nel solo tempo di costruzione.
+
+| Finestra | Roma: eventi | Roma: archi | Roma: MB | Torino: eventi | Torino: archi | Torino: MB |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 15 min | 120.725 | 291.306 | 7,3 | 50.548 | 125.728 | 3,4 |
+| 30 min | 134.120 | 331.149 | 8,0 | 55.716 | 141.550 | 3,6 |
+| 60 min | 160.611 | 410.436 | 9,3 | 65.455 | 171.932 | 4,2 |
+| 120 min | 212.788 | 566.576 | 11,9 | 83.121 | 227.023 | 5,1 |
+| 240 min | 315.000 | 871.117 | 17,0 | 118.263 | 330.877 | 6,8 |
+
+La crescita e' **sublineare** nella durata della finestra: quadruplicando
+l'orizzonte da sessanta a duecentoquaranta minuti gli archi di Roma poco piu' che
+raddoppiano. La ragione e' che una parte cospicua del grafo non dipende dalla
+finestra: i trasbordi a terra derivati dalla base di conoscenza sono gli stessi a
+qualunque ora, e sono 41.266 a Roma e 21.130 a Torino. Il grafo di due ore di Roma
+occupa dodici megabyte, un costo che rende praticabile ricostruirlo per ogni
+interrogazione anziche' conservarlo.
+
+Sulle cinquanta coppie origine-destinazione esaminate per citta', la finestra di
+due ore si e' rivelata sufficiente in **43 casi su 50 a Roma e 39 su 50 a
+Torino**, cioe' nell'86% e nel 78%. Le sette e le undici coppie rimaste non sono
+state escluse dal campione: la loro percentuale e' essa stessa un risultato, e
+toglierle darebbe una falsa impressione di completezza. Corrispondono a
+collegamenti che nella finestra considerata non esistono, tipicamente fra
+periferie opposte servite da linee a bassa frequenza.
+
+### Una relazione di dominanza che vale due ordini di grandezza
+
+Questa sottosezione riporta un passaggio intermedio dello sviluppo, perche' il
+risultato finale da solo nasconderebbe che l'identificazione degli stati non era
+affatto ovvia.
+
+La prima implementazione seguiva la lettura letterale dello stato e trattava come
+distinti due arrivi alla stessa fermata in istanti diversi. E' corretta, ma su una
+finestra di due ore produce centinaia di stati per ogni fermata, uno per ogni
+orario a cui vi si possa arrivare.
+
+L'osservazione che risolve il problema e' la relazione di dominanza gia' esposta:
+trovarsi alla stessa fermata con lo stesso numero di cambi ma prima e' sempre
+almeno altrettanto buono. Identificando uno stato a terra con la sola coppia
+`(fermata, cambi)` e conservando l'istante di arrivo piu' precoce, gli stati con
+istante posteriore spariscono senza che alcuna soluzione vada perduta.
+
+Le due formulazioni convivono nel codice, perche' altrimenti il confronto non
+sarebbe riproducibile: il parametro `istante_nella_chiave` riattiva quella
+storica. Sulla prima coppia risolta del campione di Torino, la 3176 -> 3492
+estratta con il seme 20260826, i due numeri sono questi.
+
+| Formulazione dello stato a terra | Stati espansi | Secondi |
+| --- | ---: | ---: |
+| `(fermata, istante, cambi)` | 1.464.312 | 60,39 |
+| `(fermata, cambi)` | 23.597 | 0,61 |
+
+Sessantadue volte meno stati e novantanove volte meno tempo, con lo stesso
+identico orario di arrivo. Su altre coppie il divario e' risultato ancora piu'
+ampio, fino a milioni di stati e oltre duecento secondi.
+
+Non e' un'approssimazione ma l'eliminazione di stati dimostrabilmente dominati, e
+la coincidenza dei risultati prima e dopo lo conferma sperimentalmente. Vale la
+pena osservare che senza questa riformulazione l'intera campagna sperimentale
+della Fase 5, che prevede migliaia di interrogazioni, non sarebbe stata
+eseguibile: a duecento secondi per interrogazione, mille interrogazioni
+richiederebbero due giorni e mezzo di calcolo.
+
+### L'euristica geografica in pratica: un risultato negativo
+
+Il confronto fra A* e Dijkstra e' stato eseguito su cinquanta coppie
+origine-destinazione per citta', estratte con un seme dichiarato fra le fermate
+effettivamente servite nella finestra. Le due ricerche condividono lo stesso
+codice e differiscono solo per l'euristica.
+
+Tabella 7 - Confronto delle varianti di ricerca. Media e deviazione standard sulle
+coppie risolte: 43 per Roma, 39 per Torino. La colonna "non ottime" conta le
+interrogazioni in cui la variante restituisce un orario di arrivo diverso da
+quello di Dijkstra, che non usando euristiche non puo' essere influenzato da una
+stima sbagliata.
+
+| Citta' | Variante | V (m/s) | Stati espansi | Secondi | Risparmio | Non ottime |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Roma | Dijkstra | - | 37.156 ± 32.062 | 0,514 ± 0,398 | - | 0 / 43 |
+| Roma | A* ammissibile | 82,5 | 34.391 ± 29.851 | 0,743 ± 0,540 | 7,7% ± 2,6% | 0 / 43 |
+| Roma | A* p99,9 *(non amm.)* | 15,3 | 23.771 ± 21.376 | 0,586 ± 0,441 | 35,8% ± 9,8% | 0 / 43 |
+| Torino | Dijkstra | - | 13.783 ± 10.348 | 0,201 ± 0,142 | - | 0 / 39 |
+| Torino | A* ammissibile | 139,1 | 13.301 ± 10.034 | 0,311 ± 0,191 | 3,8% ± 1,6% | 0 / 39 |
+| Torino | A* p99,9 *(non amm.)* | 22,8 | 11.070 ± 8.532 | 0,286 ± 0,178 | 20,6% ± 6,8% | 0 / 39 |
+
+Il risultato principale e' negativo, e conviene enunciarlo senza attenuazioni:
+**l'euristica ammissibile risparmia il 7,7% degli stati a Roma e il 3,8% a
+Torino, e A* impiega piu' tempo di Dijkstra**, 0,74 secondi contro 0,51 a Roma.
+Calcolare l'euristica costa piu' dei nodi che fa evitare.
+
+Non e' un fallimento del metodo: e' il metodo che funziona correttamente su dati
+imperfetti, e la catena che porta a quel numero e' interamente ricostruibile.
+
+L'euristica e' ammissibile, e la dimostrazione e' quella riportata sopra.
+L'ammissibilita' obbliga a scegliere come `V` il **massimo vero** delle velocita'
+fra fermate consecutive, perche' il limite deve valere per il grafo che si sta
+cercando, non per la fisica: se l'orario dichiara un movimento, quel movimento nel
+grafo esiste. Il massimo vero e' di **500,8 km/h a Torino e 297,1 a Roma**.
+Quei valori non vengono da coordinate sbagliate, come si potrebbe supporre, ma
+dalla tabella oraria: gli archi anomali coprono distanze del tutto ordinarie,
+duecento o quattrocento metri, in **tre secondi di orario programmato**. Sono 135
+archi su 1.752.603 a Torino e 1.063 su 5.343.307 a Roma. Con un `V` di
+cinquecento chilometri orari, l'euristica stima in pochi secondi un tempo residuo
+che ne vale centinaia, e A* si comporta quasi come Dijkstra.
+
+Tabella 8 - Distribuzione delle velocita' fra fermate consecutive, misurata
+sull'orario programmato.
+
+| Citta' | Archi | Mediana | p99 | p99,9 | Massimo | Sopra 150 km/h |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Roma | 5.343.307 | 15,6 km/h | 34,4 km/h | 55,2 km/h | 297,1 km/h | 1.063 |
+| Torino | 1.752.603 | 16,4 km/h | 56,2 km/h | 82,0 km/h | 500,8 km/h | 135 |
+
+Per quantificare quanto costi l'ammissibilita' e' stata misurata anche una
+variante **non ammissibile**, con `V` pari al 99,9-esimo percentile: 55,2 km/h a
+Roma e 82,0 a Torino, valori fisicamente plausibili per un mezzo urbano. Quella
+variante risparmia il 35,8% e il 20,6% degli stati, da quattro a cinque volte piu'
+dell'ammissibile.
+
+Il dato piu' interessante e' pero' un altro: **su nessuna delle 82 interrogazioni
+risolte la variante non ammissibile ha restituito un orario di arrivo diverso
+dall'ottimo**. La garanzia formale e la sua violazione pratica sono due cose
+distinte, e i dati dicono che su questa rete la seconda non si manifesta. Cio' non
+autorizza a rinunciare alla garanzia: un campione di ottantadue interrogazioni non
+dimostra che non esista una coppia su cui la variante sbagli, e la differenza fra
+"non abbiamo trovato controesempi" e "non esistono controesempi" e' esattamente
+cio' che una dimostrazione fornisce e una misura no. La variante ammissibile
+resta percio' l'unica che produce i risultati ufficiali del progetto, e la
+colonna `tipo_velocita` di `results/ricerca_astar.csv` marca ogni riga con il
+valore di `V` usato e con la sua natura.
+
+### Il costo dei cambi nello stato, e perche' non e' spreco
+
+Tenere il numero di cambi nello stato moltiplica lo spazio di ricerca. La misura
+lo quantifica: la variante che proietta via i cambi, identificando uno stato a
+terra con la sola fermata, espande **11.734 stati contro 34.391 a Roma** e
+**4.817 contro 13.301 a Torino**, cioe' circa un terzo. Preso da solo, il numero
+suggerirebbe che i cambi nello stato costino un fattore tre di lavoro inutile.
+
+La misura dice pero' anche un'altra cosa, che il solo conteggio degli stati
+nasconderebbe: la variante proiettata **restituisce l'itinerario sbagliato su 5
+interrogazioni su 40 a Roma e su 4 su 39 a Torino**.
+
+Il meccanismo e' stato isolato sperimentalmente. La ricerca impone un tetto di
+quattro cambi, che e' un vincolo di realismo prima che di costo. Con i cambi
+proiettati via, uno stato raggiunto per primo attraverso un percorso che ha gia'
+speso quattro cambi viene marcato come visitato, e un percorso successivo che vi
+arrivi con un solo cambio viene scartato perche' non migliora l'orario di arrivo -
+salvo che quel secondo percorso avrebbe potuto proseguire per altri tre cambi,
+mentre il primo era esaurito. Ripetendo l'esperimento con un tetto di dodici
+cambi, le discrepanze scendono a **zero**, il che conferma che la causa e' il
+tetto e non un difetto della proiezione in se'.
+
+La conclusione e' che il fattore tre non e' spreco ma il **prezzo della
+correttezza** in presenza di un vincolo sul numero di cambi. E' anche la ragione
+per cui il progetto mantiene una sola struttura di stato invece di due
+implementazioni: la variante proiettata esiste unicamente come termine di
+paragone di questa misura, non come alternativa utilizzabile.
+
+### La frontiera di Pareto sui dati reali
+
+La ricerca multi-criterio restituisce in media **5,72 ± 2,83 soluzioni non
+dominate a Roma** e **5,05 ± 2,89 a Torino**. Il numero e' significativo: se
+esistesse un itinerario ottimo, la frontiera ne conterrebbe uno solo. Che ne
+contenga mediamente cinque significa che su una tipica coppia
+origine-destinazione ci sono cinque compromessi genuinamente diversi fra
+rapidita', numero di cambi e minuti a piedi, nessuno dei quali migliore degli
+altri senza una decisione su quanto valga un cambio.
+
+E' precisamente il fatto che rende interessante la domanda di ricerca del
+progetto. Se l'itinerario ottimo fosse unico, massimizzare la probabilita' di
+arrivo entro un orario si ridurrebbe a un problema di riordinamento; poiche' non
+lo e', la scelta di quale compromesso proporre dipende dal criterio, e la Fase 4
+potra' mostrare che il criterio probabilistico ne seleziona uno diverso da quello
+scelto minimizzando l'orario teorico.
+
+![Ricerca di itinerari](../results/ricerca_astar.png)
+
+**Figura 2.** Costo del grafo ed effetto dell'euristica, su cinquanta coppie
+origine-destinazione per citta' con partenza alle 08:00 e finestra di 120 minuti.
+Il pannello (a) riporta la crescita del grafo con l'orizzonte temporale, in scala
+doppio logaritmica. Il pannello (b) confronta gli stati espansi da A* ammissibile
+con quelli di Dijkstra sulle stesse interrogazioni: la nuvola aderisce alla
+bisettrice, che e' la rappresentazione visiva del risparmio quasi nullo. Il
+pannello (c) confronta la distribuzione del risparmio per le due varianti; **le
+scatole tratteggiate corrispondono all'euristica NON ammissibile**, che non
+garantisce l'ottimo e non produce alcun risultato ufficiale del progetto. Il
+pannello (d) mostra il costo dei cambi nello stato: la variante proiettata espande
+circa un terzo degli stati, ma sbaglia l'itinerario su nove interrogazioni su 79.
+Dati grezzi in `results/ricerca_astar.csv`, `results/grafo_finestra.csv` e
+`results/velocita_archi.csv`.
+
+### Il modello dei ritardi non entra in questa fase
+
+Va detto esplicitamente, perche' e' una scelta di perimetro e non
+un'omissione: **la ricerca descritta in questa sezione lavora sull'orario
+programmato** e non usa in alcun modo i ritardi. La robustezza probabilistica e'
+oggetto della Fase 4.
+
+Il modulo `src/delays/interfaccia.py` e' stato scritto in questa fase perche' il
+contratto fra ricerca e modello dei ritardi va progettato prima di cio' che lo
+consumera', non perche' la ricerca ne dipenda. Contiene una implementazione
+sintetica, che serve unicamente a far girare e collaudare il codice mentre la
+raccolta dei dati prosegue.
+
+Un modello sintetico e' per costruzione indistinguibile da uno vero attraverso
+l'interfaccia, ed e' esattamente questo a renderlo pericoloso: senza un controllo
+esplicito, una dimenticanza basterebbe a pubblicare numeri calcolati su ritardi
+inventati senza che nulla lo segnali. Il presidio ha tre livelli. Ogni modello
+espone un attributo che dichiara se sia sintetico; ogni script che scriva in
+`results/` invoca un controllo che solleva un errore a meno che non sia stato
+concesso il permesso esplicito; e ogni file di risultati porta il nome del modello
+che lo ha prodotto, cosi' l'origine resta leggibile anche a distanza di mesi.
+**Nessun risultato riportato in questo documento e' stato prodotto con il modello
+sintetico.**

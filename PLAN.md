@@ -127,15 +127,31 @@ sulla macchina di analisi.
 
 ## Fase 2 — Grafo tempo-espanso e ricerca
 
-- [ ] `src/graph/time_expanded.py`: stato `(fermata, istante, numero di cambi)`;
-      archi di permanenza a bordo, discesa e trasbordo, cammino a piedi
-- [ ] Documentazione della rappresentazione scelta e del costo in memoria
-- [ ] `src/graph/search.py`: A* mono-criterio con euristica geografica, con
-      dimostrazione dell'ammissibilita' nel docstring
-- [ ] Ricerca multi-criterio: frontiera di Pareto su (orario di arrivo, numero di
-      cambi, minuti a piedi)
-- [ ] Misura di nodi espansi e tempo per query; confronto A* contro Dijkstra
-- [ ] Test su casi costruiti a mano con risultato noto
+- [x] `src/delays/interfaccia.py`: contratto del modello dei ritardi piu'
+      implementazione sintetica, con il presidio a tre livelli contro l'uso
+      accidentale nei risultati
+- [x] `src/graph/time_expanded.py`: stato sdoppiato in ATerra e ABordo, finestra
+      temporale di 120 minuti, archi da `transfers_<citta>.parquet`
+- [x] `src/graph/search.py`: A* e Dijkstra come stesso codice, frontiera di Pareto
+      su (arrivo, cambi, minuti a piedi)
+- [x] Dimostrazione di ammissibilita' e consistenza nel docstring e nel documento
+- [x] Confronto su 50 coppie per citta': `results/ricerca_astar.csv`,
+      `results/grafo_finestra.csv`, `results/velocita_archi.csv`,
+      `results/ricerca_astar.png`
+- [x] Variante non ammissibile a p99,9 come termine di paragone, marcata come
+      tale nel codice, nel CSV e nella figura
+- [x] Sezione "Ricerca di itinerari" in `docs/documentazione.md`
+- [x] Test: A* contro ricerca esaustiva, ammissibilita' per campionamento,
+      dominanza di Pareto
+- [x] Voci 43-48 del registro delle decisioni
+
+**Risultati principali.** L'euristica ammissibile risparmia il 7,7% degli stati a
+Roma e il 3,8% a Torino, ed e' piu' lenta di Dijkstra: e' la conseguenza del
+massimo di velocita' imposto dall'ammissibilita' (501 km/h a Torino, 297 a Roma),
+che a sua volta viene da orari programmati che dichiarano 400 metri in 3 secondi.
+La variante non ammissibile risparmia il 35,8% e il 20,6% e non ha mai perso
+l'ottimo sulle 82 interrogazioni risolte, il che non basta a rinunciare alla
+garanzia.
 
 ---
 

@@ -1121,3 +1121,190 @@ lo dichiara in modo esatto.
 vuoti nelle colonne `stop_id` e `route_id` deve essere zero per entrambe le
 citta', e quello dei nulli in `orario_programmato` e `ritardo_secondi` pure. Sui
 due giorni gia' consolidati e' cosi'.
+
+---
+
+## Fase 2 — Grafo tempo-espanso e ricerca
+
+### 43. Il grafo copre una finestra temporale, non la giornata
+
+**Decisione.** Il grafo tempo-espanso viene costruito sull'intervallo
+`[partenza, partenza + orizzonte]`, con orizzonte predefinito di 120 minuti.
+
+**Alternative considerate.** Costruire il grafo dell'intera giornata di servizio e
+riusarlo per tutte le interrogazioni.
+
+**Motivo.** L'orario di Roma contiene 5,6 milioni di passaggi al giorno. Il grafo
+completo non e' un oggetto che si costruisca per rispondere a una singola
+interrogazione, e riusarlo fra interrogazioni diverse non aiuterebbe, perche' la
+Fase 5 eseguira' migliaia di interrogazioni con orari di partenza diversi. La
+finestra e' anche cio' che una interrogazione usa davvero: nessuno accetta di
+attendere quattro ore alla fermata.
+
+Il limite va dichiarato come limite dei risultati e non come nota
+implementativa: **la ricerca trova l'ottimo dentro la finestra**, e un itinerario
+che richiedesse di attendere oltre l'orizzonte non verrebbe trovato affatto.
+
+**Come si potrebbe verificare.** E' misurato su quante coppie origine-destinazione
+dell'esperimento la finestra di due ore si riveli sufficiente. Le coppie non
+risolte non vengono escluse dal campione: la loro percentuale e' essa stessa un
+risultato, e toglierle darebbe una falsa impressione di completezza.
+
+---
+
+### 44. Lo stato si sdoppia in "a terra" e "a bordo"
+
+**Decisione.** Lo stato della ricerca e' la terna `(fermata, istante, cambi)` piu'
+l'informazione se ci si trovi a terra oppure a bordo di una corsa specifica.
+
+**Alternative considerate.** La sola terna, come formulata inizialmente.
+
+**Motivo.** La terna da sola non permette di contare correttamente i cambi.
+Stando a una fermata a un dato istante, "restare a bordo" e "salire di nuovo"
+sono indistinguibili se non si sa su quale corsa ci si trovi: un viaggiatore che
+percorre dieci fermate senza scendere passerebbe per dieci stati che sembrano
+altrettante salite, e la ricerca gli attribuirebbe dieci cambi. Il numero di
+cambi e' uno dei tre criteri della ricerca multi-criterio, quindi l'errore
+falserebbe l'intera frontiera di Pareto senza che nulla lo segnali.
+
+Il cambio si conta alla salita e non alla discesa: contarlo alla discesa
+addebiterebbe un cambio anche a chi scende semplicemente a destinazione.
+
+**Come si potrebbe verificare.** Il test
+`test_restare_a_bordo_non_conta_come_cambio` percorre una corsa che attraversa
+piu' fermate e verifica che il conteggio resti a uno.
+
+---
+
+### 45. La chiave di stato a terra non contiene l'istante
+
+**Decisione.** Uno stato a terra e' identificato dalla coppia `(fermata, cambi)`,
+conservando l'istante di arrivo piu' precoce, e non dalla terna completa.
+
+**Alternative considerate.** La lettura letterale della terna, che era
+l'implementazione iniziale.
+
+**Motivo.** E' una relazione di dominanza: trovarsi alla stessa fermata con lo
+stesso numero di cambi ma **prima** e' sempre almeno altrettanto buono, perche'
+ogni proseguimento disponibile a chi arriva tardi lo e' anche a chi arriva presto
+- le corse partono agli stessi orari per entrambi - e attendere non costa nulla.
+Gli stati con istante posteriore sono percio' dominati e possono essere eliminati
+senza perdere soluzioni.
+
+Il guadagno non e' marginale ed e' stato misurato: su una interrogazione di
+Torino, la formulazione con l'istante nella chiave espandeva **6,4 milioni di
+stati in 224 secondi**, quella con la chiave ridotta ne espande **45 mila in 0,7
+secondi**, restituendo lo stesso orario di arrivo. Sono due ordini di grandezza,
+e la differenza fra una ricerca utilizzabile e una che non lo e'.
+
+Va sottolineato che non e' un'approssimazione: elimina stati dimostrabilmente
+dominati, e l'ottimo resta garantito.
+
+**Come si potrebbe verificare.** La coincidenza degli orari di arrivo prima e
+dopo l'ottimizzazione, gia' osservata; e il test che confronta A* con una ricerca
+esaustiva su istanze piccole, che continua a passare.
+
+---
+
+### 46. L'euristica usa il massimo VERO delle velocita', difetti dell'orario compresi
+
+**Decisione.** La velocita' `V` dell'euristica geografica e' il massimo assoluto
+misurato fra fermate consecutive sull'orario programmato, senza alcun taglio.
+
+**Alternative considerate.** Un percentile alto, che sarebbe piu' rappresentativo
+della fisica del problema; oppure l'esclusione degli archi anomali come dati
+sporchi.
+
+**Motivo.** L'ammissibilita' dell'euristica e' una delle poche proprieta' che il
+progetto puo' **dimostrare formalmente**, ed e' cio' che garantisce che A*
+restituisca l'ottimo. La dimostrazione richiede che `V` sia un limite superiore
+alla velocita' di ogni spostamento **del grafo che stiamo cercando**, non della
+realta' fisica: se la tabella oraria dichiara quattrocento metri in tre secondi,
+allora in quel grafo quel movimento e' possibile, e `V` deve tenerne conto.
+
+La misura mostra che questo accade davvero. Le velocita' fra fermate consecutive
+hanno mediana di 16,4 km/h a Torino e 15,6 a Roma, valori perfettamente
+plausibili, ma il massimo e' di **500,8 km/h a Torino e 297,1 a Roma**, con 135 e
+1.063 archi rispettivamente sopra i 150 km/h. Caratterizzando gli archi anomali si
+scopre che **il difetto non e' nelle coordinate ma negli orari**: le distanze sono
+normali, dell'ordine dei 200-400 metri, ed e' la durata programmata a essere
+assurda, tre secondi.
+
+L'esclusione degli archi anomali e' stata scartata per una ragione precisa:
+sposterebbe la garanzia da "vale sull'orario pubblicato" a "vale sull'orario che
+abbiamo deciso noi", indebolendo proprio la parte piu' solida del progetto.
+
+**Conseguenza, che e' un risultato negativo da riportare.** Con `V` cosi' grande
+l'euristica vale quasi zero, e A* risparmia pochi punti percentuali di nodi
+rispetto a Dijkstra, risultando anzi piu' lento in tempo di orologio perche'
+calcolare l'euristica costa piu' dei nodi che fa evitare.
+
+**Come si potrebbe verificare.** Il confronto e' misurato su cinquanta coppie per
+citta' e riportato nella sezione della documentazione. Un test verifica inoltre
+per campionamento che l'euristica non superi mai il costo residuo reale.
+
+---
+
+### 47. Una variante non ammissibile, come confronto e solo come confronto
+
+**Decisione.** Accanto all'euristica ammissibile si misura una variante con `V`
+pari al 99,9-esimo percentile delle velocita' - 82,0 km/h a Torino e 55,2 a Roma
+- dichiarata **non ammissibile** ovunque compaia: nel codice, in una colonna del
+CSV dei risultati e nella didascalia della figura.
+
+**Alternative considerate.** Non misurarla affatto; oppure adottarla come
+predefinita, guadagnando velocita'.
+
+**Motivo.** Adottarla farebbe perdere la garanzia di ottimalita', che e' una
+proprieta' dimostrabile e un punto di forza del progetto. Non misurarla
+lascerebbe pero' senza risposta la domanda naturale: quanto costa davvero
+rinunciare a quella garanzia? Misurandola si trasforma il difetto dei dati in un
+risultato quantificato.
+
+La scelta del 99,9-esimo percentile non e' arbitraria: produce valori fisicamente
+plausibili per un mezzo urbano, mentre un percentile piu' basso escluderebbe
+tratte veloci legittime, per esempio quelle ferroviarie o metropolitane.
+
+Il numero che conta non e' il risparmio di nodi ma **su quante interrogazioni la
+variante restituisce un orario di arrivo diverso dall'ottimo**: e' quello a
+misurare il costo reale della rinuncia, invece di lasciarlo come rischio teorico.
+
+**Come si potrebbe verificare.** La colonna `ottimo` di
+`results/ricerca_astar.csv` confronta l'orario di ogni variante con quello di
+Dijkstra, che non usa euristiche e non puo' quindi essere influenzato da una
+stima sbagliata.
+
+---
+
+### 48. L'interfaccia del modello dei ritardi viene fissata prima dei dati
+
+**Decisione.** `src/delays/interfaccia.py` definisce il contratto - una tratta
+entra, una distribuzione esce - piu' una implementazione sintetica per lo
+sviluppo. Il contratto e' fissato in Fase 2, due settimane prima che i dati
+siano disponibili.
+
+**Alternative considerate.** Aspettare i dati e progettare l'interfaccia sulla
+forma che il modello appreso assumera'.
+
+**Motivo.** La Fase 4 dovra' comporre distribuzioni di ritardo lungo una catena
+di coincidenze. Aspettare i dati per decidere che forma abbia una distribuzione
+significherebbe riscrivere le Fasi 2 e 4 quando arrivano. Le quattro operazioni
+richieste - funzione di ripartizione, quantile, campionamento e media - non sono
+arbitrarie: sono esattamente quelle che le fasi successive usano, la prima per
+P(arrivo <= T), la seconda per la pinball loss, la terza per il Monte Carlo, la
+quarta per i confronti con le baseline deterministiche.
+
+**Il presidio contro l'uso accidentale.** Un modello sintetico e' per costruzione
+indistinguibile da uno vero attraverso l'interfaccia, ed e' proprio questo a
+renderlo pericoloso: senza un controllo esplicito basterebbe una dimenticanza per
+pubblicare nel documento numeri calcolati su ritardi inventati, e nulla
+nell'output lo segnalerebbe. Il presidio ha tre livelli: ogni modello espone un
+attributo `sintetico`; ogni script che scriva in `results/` chiama
+`assicura_utilizzabile`, che solleva un errore a meno che non sia stato passato
+`--sintetico-ammesso`; e ogni CSV porta il nome del modello che lo ha prodotto,
+cosi' l'origine di un risultato resta leggibile anche a distanza di mesi.
+
+**Come si potrebbe verificare.** Tentare di eseguire uno script sperimentale con
+il modello sintetico senza il permesso esplicito deve fallire con un messaggio che
+spiega perche'. Nessun file in `results/` deve riportare `sintetico` nella colonna
+del modello.

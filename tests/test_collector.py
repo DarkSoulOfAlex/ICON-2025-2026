@@ -674,27 +674,6 @@ def test_uno_scaricamento_fallito_verra_ritentato_al_giro_dopo(tmp_path: Path, m
 
 
 # =============================================================================
-# index.json letto dal lato della Fase 3
-# =============================================================================
-
-
-def test_la_versione_valida_e_quella_del_giorno_stesso() -> None:
-    indice = {"giorni": {"2026-08-25": {"file": "a.zip"}, "2026-08-26": {"file": "b.zip"}}}
-    assert pr.versione_valida(indice, "2026-08-26")["file"] == "b.zip"
-
-
-def test_senza_voce_esplicita_vale_l_ultima_precedente() -> None:
-    """Se il collector era fermo, l'orario in vigore resta quello dell'ultima revisione."""
-    indice = {"giorni": {"2026-08-20": {"file": "a.zip"}, "2026-08-26": {"file": "b.zip"}}}
-    assert pr.versione_valida(indice, "2026-08-23")["file"] == "a.zip"
-
-
-def test_prima_della_prima_revisione_non_c_e_nulla() -> None:
-    indice = {"giorni": {"2026-08-20": {"file": "a.zip"}}}
-    assert pr.versione_valida(indice, "2026-08-19") is None
-
-
-# =============================================================================
 # Registro delle interruzioni
 # =============================================================================
 

@@ -42,6 +42,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from src.gtfs.indice_statico import (
+    carica_indice,
+    indice_vuoto,
+    salva_indice,
+    versione_valida,
+)
+
 try:
     from google.transit import gtfs_realtime_pb2
 except ImportError as errore:  # pragma: no cover - dipende dall'ambiente, non dalla logica
@@ -735,62 +742,6 @@ class EsitoOrarioStatico:
     origine: str  # "scaricato" | "invariato" | "fallito"
     md5: str | None
     file: str | None
-
-
-def indice_vuoto(citta: str) -> dict[str, Any]:
-    """Struttura iniziale di index.json.
-
-    ``giorni`` mappa ogni data alla versione dell'orario valida quel giorno;
-    ``versioni`` raccoglie le revisioni distinte, cosi' una revisione che ritorna
-    identica non produce un secondo archivio.
-    """
-    return {"citta": citta, "aggiornato": None, "giorni": {}, "versioni": {}}
-
-
-def carica_indice(percorso: Path, citta: str) -> dict[str, Any]:
-    """Legge index.json, ripartendo da vuoto se e' illeggibile.
-
-    Un indice corrotto non deve impedire la raccolta del real-time, che e'
-    l'unico dato irripetibile: al peggio si riscarica l'orario statico, che e'
-    sempre recuperabile.
-    """
-    if not percorso.is_file():
-        return indice_vuoto(citta)
-    try:
-        indice = json.loads(percorso.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        log.warning("[%s] index.json illeggibile: ne creo uno nuovo.", citta)
-        return indice_vuoto(citta)
-    if not isinstance(indice, dict) or "giorni" not in indice:
-        return indice_vuoto(citta)
-    indice.setdefault("citta", citta)
-    indice.setdefault("versioni", {})
-    return indice
-
-
-def salva_indice(percorso: Path, indice: dict[str, Any]) -> None:
-    percorso.parent.mkdir(parents=True, exist_ok=True)
-    percorso.write_text(
-        json.dumps(indice, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8"
-    )
-
-
-def versione_valida(indice: dict[str, Any], data_locale: str) -> dict[str, Any] | None:
-    """Versione dell'orario statico in vigore in una certa data di servizio.
-
-    Se per quella data non c'e' una voce esplicita (per esempio perche' il
-    collector era fermo), si ripiega sulla data precedente piu' vicina: l'orario
-    in vigore resta quello finche' l'agenzia non ne pubblica uno nuovo. E' la
-    funzione che la Fase 3 usera' per sapere con quale archivio interpretare i
-    ``trip_id`` di un certo giorno.
-    """
-    giorni = indice.get("giorni") or {}
-    if data_locale in giorni:
-        return giorni[data_locale]
-    precedenti = [data for data in giorni if data < data_locale]
-    if not precedenti:
-        return None
-    return giorni[max(precedenti)]
 
 
 def forse_archivia_orario(

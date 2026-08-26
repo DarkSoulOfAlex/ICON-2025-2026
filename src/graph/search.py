@@ -279,6 +279,14 @@ class EsitoPareto:
     frontiera: list[Etichetta]
     stati_espansi: int
     tempo_secondi: float
+    cammini: dict[Etichetta, list[Stato]] = field(default_factory=dict)
+    """Cammino che realizza ciascuna soluzione non dominata.
+
+    Serve alla Fase 4, che deve valutare la probabilita' di arrivo di ogni
+    soluzione della frontiera e quindi ha bisogno delle corse effettive, non dei
+    soli tre criteri. Ricostruirlo a posteriori da (arrivo, cambi, piedi) non
+    sarebbe possibile: quei tre numeri non identificano un itinerario.
+    """
 
 
 def cerca_frontiera_pareto(
@@ -308,6 +316,12 @@ def cerca_frontiera_pareto(
     iniziale = ATerra(partenza_idx, partenza, 0)
     etichette: dict[tuple, list[Etichetta]] = {}
     frontiera_finale: list[Etichetta] = []
+    # Predecessore di ogni coppia (stato, etichetta): e' la chiave con cui si
+    # ricostruisce il cammino, perche' lo stesso stato puo' essere raggiunto con
+    # compromessi diversi e ciascuno ha la propria storia.
+    precedente: dict[tuple, tuple] = {}
+    arrivi: dict[Etichetta, tuple] = {}
+    stati_finali: dict[tuple, Stato] = {}
     contatore = 0
     coda: list[tuple[int, int, int, int, Stato, Etichetta]] = [
         (partenza, 0, 0, 0, iniziale, Etichetta(partenza, 0, 0))
@@ -319,10 +333,12 @@ def cerca_frontiera_pareto(
         chiave = _chiave(grafo, stato, con_cambi=False)
         if not _aggiorna_frontiera(etichette.setdefault(chiave, []), etichetta):
             continue
+        stati_finali[(chiave, etichetta)] = stato
         espansi += 1
 
         if isinstance(stato, ATerra) and stato.fermata == arrivo_idx:
-            _aggiorna_frontiera(frontiera_finale, etichetta)
+            if _aggiorna_frontiera(frontiera_finale, etichetta):
+                arrivi[etichetta] = (chiave, etichetta)
             continue
 
         # Potatura: una soluzione gia' trovata che domina questo parziale rende
@@ -337,12 +353,39 @@ def cerca_frontiera_pareto(
             if isinstance(stato, ATerra) and isinstance(successivo, ATerra):
                 piedi += arrivo - stato.istante
             nuova = Etichetta(int(arrivo), successivo.cambi, piedi)
+            chiave_succ = _chiave(grafo, successivo, con_cambi=False)
+            precedente[(chiave_succ, nuova)] = (chiave, etichetta, stato)
             contatore += 1
             heapq.heappush(coda, (nuova.orario_arrivo, nuova.cambi, nuova.secondi_a_piedi,
                                   contatore, successivo, nuova))
 
+    frontiera = sorted(frontiera_finale, key=lambda e: (e.orario_arrivo, e.cambi))
+    cammini = {
+        etichetta: _ricostruisci_pareto(precedente, arrivi[etichetta], stati_finali)
+        for etichetta in frontiera
+        if etichetta in arrivi
+    }
     return EsitoPareto(
-        frontiera=sorted(frontiera_finale, key=lambda e: (e.orario_arrivo, e.cambi)),
+        frontiera=frontiera,
         stati_espansi=espansi,
         tempo_secondi=perf_counter() - inizio,
+        cammini=cammini,
     )
+
+
+def _ricostruisci_pareto(
+    precedente: dict[tuple, tuple], partenza: tuple, stati: dict[tuple, Stato]
+) -> list[Stato]:
+    """Risale la catena dei predecessori di una soluzione della frontiera."""
+    chiave, etichetta = partenza
+    cammino: list[Stato] = []
+    corrente = (chiave, etichetta)
+    for _ in range(10_000):
+        if corrente in stati:
+            cammino.append(stati[corrente])
+        if corrente not in precedente:
+            break
+        chiave_prec, etichetta_prec, stato_prec = precedente[corrente]
+        cammino.append(stato_prec)
+        corrente = (chiave_prec, etichetta_prec)
+    return list(reversed(cammino))

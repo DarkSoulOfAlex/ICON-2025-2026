@@ -702,3 +702,215 @@ potuto raccogliere avvisi testuali nemmeno con gli indirizzi sbagliati.
 **Come si potrebbe verificare.** `git log` mostra che `config.yaml` e' passato
 dai segnaposto agli indirizzi reali in un unico commit, senza raccolte
 intermedie; il primo `_manifest.csv` presente su disco e' del 2026-08-25.
+
+---
+
+## Fase 1 — GTFS statico e base di conoscenza
+
+### 30. Indice spaziale a griglia per la regola del cammino
+
+**Decisione.** La regola del trasbordo a piedi confronta soltanto le fermate che
+si trovano nella stessa cella di una griglia regolare o in una delle otto
+adiacenti. Il lato della cella e' posto **uguale** alla soglia di cammino, non e'
+un parametro indipendente.
+
+**Alternative considerate.** Confrontare tutte le coppie di fermate; oppure
+precalcolare le distanze in Python e passarle come fatti.
+
+**Motivo.** Il confronto esaustivo istanzia un numero quadratico di atomi: sulle
+8.301 fermate di Roma sono circa 69 milioni di coppie, e il grounding non termina
+in tempo utile. Precalcolare le distanze in Python era l'altra via, ma avrebbe
+spostato fuori dalla base di conoscenza proprio la regola che decide quali coppie
+siano trasbordi, riducendo la KB a un'interrogazione su una tabella gia'
+calcolata: esattamente cio' che il progetto deve evitare.
+
+Il vincolo lato = soglia e' cio' che rende l'indice **semanticamente neutro**: due
+fermate a distanza inferiore alla soglia non possono cadere in celle non
+adiacenti, quindi nessun trasbordo puo' sfuggire al confronto. Un lato piu'
+piccolo romperebbe la garanzia.
+
+Va dichiarato che non si tratta di clustering nel senso escluso dai vincoli di
+valutazione: non c'e' nulla di appreso, nessun centroide, nessuna funzione
+obiettivo, nessuna dipendenza dai dati oltre le coordinate. E' un'indicizzazione
+deterministica, l'equivalente spaziale di un indice su una colonna.
+
+**Come si potrebbe verificare.** E' stato verificato in due modi. Il test
+`test_l_indice_spaziale_non_altera_i_trasbordi_derivati` confronta gli insiemi
+derivati con e senza indice sul GTFS giocattolo; la misura di complessita' ripete
+il confronto sui dati reali a 50, 150 e 400 fermate per entrambe le citta'. In
+tutti i casi gli insiemi sono risultati identici. Il risparmio misurato cresce da
+1,4 a 10,1 volte nell'intervallo esaminato.
+
+---
+
+### 31. Identificativi interi e coordinate in metri
+
+**Decisione.** Gli identificativi GTFS delle fermate diventano interi progressivi
+prima di entrare nel programma logico, e le coordinate geografiche diventano metri
+interi su una proiezione equirettangolare locale centrata sul baricentro delle
+fermate della citta'.
+
+**Alternative considerate.** Usare gli identificativi testuali come costanti ASP e
+le coordinate in micro-gradi, calcolando il fattore di conversione dentro la
+regola.
+
+**Motivo.** Sono entrambi cambi di rappresentazione, non di conoscenza: la
+corrispondenza fra identificativi e' biunivoca e viene conservata in memoria, e la
+proiezione e' un cambio di unita' di misura, l'analogo del conservare gli orari in
+secondi anziche' come `HH:MM:SS`. Il guadagno sugli identificativi e' di velocita'
+nel grounding. Sulle coordinate il guadagno e' che la regola di distanza puo'
+essere scritta in aritmetica intera semplice, senza dover conoscere la latitudine:
+in gradi il rapporto fra un grado di longitudine e uno di latitudine dipende dal
+coseno della latitudine, e portarlo dentro la regola avrebbe richiesto una
+costante precalcolata comunque, con in piu' l'illeggibilita'.
+
+L'errore della proiezione equirettangolare, sulla scala di una citta' e a
+distanze dell'ordine dei 250 metri, e' inferiore al metro: irrilevante rispetto
+alla discretizzazione in bande decisa alla voce 32.
+
+**Come si potrebbe verificare.** Confrontare, su un campione di coppie, la
+distanza calcolata sul piano proiettato con la distanza geodetica: lo scarto deve
+restare sotto il metro alle distanze rilevanti.
+
+---
+
+### 32. Tempo di cammino discretizzato in bande
+
+**Decisione.** Il tempo di cammino non e' proporzionale alla distanza ma assume
+quattro valori, secondo la banda di distanza in cui la coppia ricade. La regola
+seleziona il minimo fra i tempi delle bande che contengono la distanza, usando un
+aggregato `#min`.
+
+**Alternative considerate.** Calcolare la radice quadrata della distanza al
+quadrato e dividere per una velocita'.
+
+**Motivo.** In aritmetica intera la radice quadrata si esprime generando un
+candidato per ogni valore possibile e vincolandolo, il che moltiplicherebbe il
+grounding per il numero di metri della soglia: 251 istanze per ogni coppia
+candidata, cioe' due ordini di grandezza di costo in piu' per una precisione che
+non serve. Un tempo di trasbordo ha senso al mezzo minuto, non al metro.
+
+E' una scelta di modello dichiarata, non un'approssimazione subita, e resta
+interna alla base di conoscenza: le bande sono fatti ASP, e cambiarle significa
+cambiare quattro righe di `rules.lp`.
+
+**Come si potrebbe verificare.** Raffinare le bande a passi di 25 metri e
+misurare quanto cambino i tempi minimi derivati e il costo di grounding. Se i
+tempi cambiassero in modo apprezzabile, la discretizzazione sarebbe troppo
+grossolana.
+
+---
+
+### 33. Campionamento per prossimita' dal baricentro geometrico
+
+**Decisione.** Le sottoreti della curva di complessita' sono le N fermate piu'
+vicine a un centro fisso, e il centro e' la fermata piu' vicina al baricentro
+geometrico di tutte le fermate della citta', calcolato dai dati.
+
+**Alternative considerate.** Campionamento casuale uniforme; oppure un centro
+scelto a mano, per esempio la stazione principale.
+
+**Motivo.** Cinquanta fermate estratte a sorte fra le 8.301 di Roma finirebbero
+sparse su tutta la citta', a chilometri l'una dall'altra, e non genererebbero
+quasi nessun trasbordo a piedi: la curva misurerebbe il costo di un problema che
+non somiglia a quello vero. Il campionamento per prossimita' conserva la densita'
+reale della rete. Ha inoltre la proprieta' di essere monotono, cioe' un campione
+piu' grande contiene quello piu' piccolo, senza la quale i punti della curva non
+sarebbero confrontabili fra loro.
+
+Il centro derivato dai dati anziche' scelto a mano rende la misura riproducibile e
+dichiarabile: per Roma e' la fermata 70841, S. SABA/AVENTINO, per Torino la 962,
+Fermata 1873 - PUGLIA C.3.
+
+Il limite va dichiarato: i risultati valgono per porzioni connesse e dense di
+rete e non sono estrapolabili a un campione sparso di pari cardinalita'. La
+misura sull'intera rete lo conferma, perche' produce meno atomi di quanti la
+curva ne avrebbe fatti prevedere.
+
+**Come si potrebbe verificare.** Ripetere la curva con campionamento casuale: ci
+si attende un numero di trasbordi per fermata molto piu' basso e una crescita
+degli atomi quasi lineare, perche' la chiusura transitiva non troverebbe
+componenti connesse di dimensione apprezzabile.
+
+---
+
+### 34. Vincoli di integrita' scelti perche' possano essere violati
+
+**Decisione.** Dei vincoli inizialmente formulati ne sono stati mantenuti quattro
+e scartati due. Gli scartati vietavano il trasbordo di una fermata con se stessa e
+imponevano la simmetria del cammino.
+
+**Alternative considerate.** Tenerli tutti, dato che non costano nulla.
+
+**Motivo.** La costruzione della regola `candidata` rende quei due vincoli
+impossibili da violare per definizione: nessun dato, per quanto malformato, puo'
+farli scattare. Un vincolo che non puo' mai essere violato non e' logica, e'
+commento travestito da logica, e in sede d'esame sarebbe un punto debole invece
+che un punto di forza. I quattro mantenuti corrispondono ciascuno a un difetto
+documentato dei GTFS pubblicati: grado implausibile per coordinate mancanti, tempo
+dichiarato piu' breve del cammino, banchina accessibile in stazione non
+accessibile, tempo di trasbordo nullo.
+
+**Come si potrebbe verificare.** Ciascuno dei quattro ha un test che costruisce il
+dato che lo viola e verifica che il programma diventi insoddisfacibile, e che
+torni soddisfacibile disattivando i soli vincoli. I due scartati non sarebbero
+collaudabili in questo modo, ed e' precisamente la ragione per cui sono stati
+tolti.
+
+---
+
+### 35. La materializzazione per la Fase 2 escludera' la chiusura transitiva
+
+**Decisione.** `transfers.parquet` contiene la relazione `trasbordo_ammissibile`
+con i suoi attributi, non la chiusura `raggiungibile`. La chiusura resta
+calcolabile su richiesta, tramite un interruttore del programma logico.
+
+**Alternative considerate.** Materializzare anche la chiusura, dato che il grafo
+tempo-espanso potrebbe volerla.
+
+**Motivo.** La misura di complessita' mostra che la chiusura transitiva genera fra
+il 70% e il 93% degli atomi alle dimensioni maggiori, mentre la relazione
+effettivamente consumata dal grafo tempo-espanso e' quella dei trasbordi diretti,
+che cresce linearmente e si attesta su circa cinque trasbordi per fermata a Roma e
+tre a Torino. Materializzare la chiusura costerebbe un ordine di grandezza in piu'
+per rispondere a domande che il pianificatore pone di rado.
+
+Il fatto che la scelta si possa compiere a valle, disattivando un interruttore
+invece di riformulare le regole, e' una conseguenza diretta della natura
+dichiarativa della rappresentazione ed e' argomento da portare all'orale.
+
+**Come si potrebbe verificare.** In Fase 2, contare quante volte il grafo
+tempo-espanso interroghi effettivamente la raggiungibilita' globale. Se il numero
+fosse alto, converrebbe materializzarla.
+
+---
+
+### 36. Risultato negativo: Roma non dichiara accessibilita' ne' stazioni
+
+**Decisione.** Le regole sull'accessibilita' e il livello di stazione della
+gerarchia dei tempi restano nella base di conoscenza, pur non ricevendo fatti
+utili da Roma.
+
+**Motivo.** Verificato sui dati del 2026-08-26: tutte le 8.301 fermate di Roma
+dichiarano `wheelchair_boarding` uguale a zero, cioe' "informazione non
+disponibile", e lo stesso vale per tutte le 179.177 corse; nessuna fermata di
+Roma dichiara una `parent_station`. La conseguenza e' che sull'intera rete di
+Roma la base di conoscenza deriva **zero** trasbordi accessibili. Torino si
+comporta diversamente: 2.722 fermate accessibili, 1.075 esplicitamente non
+accessibili, e 7.382 trasbordi accessibili derivati su 21.130; ma anche li'
+soltanto due fermate su 7.073 appartengono a una stazione.
+
+Sommato al fatto che nessuna delle due citta' pubblica `transfers.txt`, questo
+significa che l'eredita' difettibile a tre livelli, sul campo, opera quasi
+ovunque sul solo terzo livello. Le regole restano perche' la base di conoscenza e'
+scritta per il formato GTFS e non per due archivi particolari, e su un'azienda
+che pubblichi quei campi entrerebbero in funzione senza modifiche; ma sarebbe
+disonesto presentarle come funzionanti su questi dati, e vengono percio' dichiarate
+come tali nel documento.
+
+**Conseguenza operativa.** Ogni risultato sull'accessibilita' nelle fasi
+successive andra' riferito alla sola Torino, mai alla media delle due citta'.
+
+**Come si potrebbe verificare.** Aggiungere al progetto una terza citta' che
+pubblichi `transfers.txt` e una gerarchia di stazioni, e osservare che i primi due
+livelli della gerarchia entrino in funzione senza modificare `rules.lp`.

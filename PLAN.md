@@ -44,7 +44,7 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
   - [x] log ruotato su file e riepilogo orario
   - [x] uscita ordinata su segnale di terminazione
   - [x] modalita' `--diagnostica` per giudicare un feed prima di adottarlo
-- [x] Test: 77 casi, logica pura piu' giri completi su server HTTP locale
+- [x] Test: logica pura piu' giri completi su server HTTP locale
 - [x] `README.md` con le istruzioni di esecuzione in background
 - [x] `docs/decisioni.md` inaugurato
 
@@ -67,11 +67,10 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 - [x] `scripts/verifica_feed.py`, eseguito su tutti i feed configurati
 - [x] Nessun dato da scartare: la raccolta non era mai partita (voce 29)
 
+- [x] Orario statico di Torino aggiunto e verificato (19,0 MB, archiviato)
+
 **Ancora aperto:**
 
-- [ ] **Orario statico di Torino**: manca l'indirizzo. Finche' non c'e', i dump
-      real-time di Torino vengono raccolti ma non saranno interpretabili in
-      Fase 3, perche' non si potra' risalire agli orari programmati.
 - [ ] Copia di sicurezza di `data/` su un secondo supporto (~1,3 GB al giorno)
 - [ ] Verifica della copertura dopo il primo giorno pieno
 
@@ -79,23 +78,23 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 
 ## Fase 1 — GTFS statico e base di conoscenza
 
-- [ ] `src/gtfs/loader.py`: lettura di un archivio GTFS in DataFrame (stops,
-      routes, trips, stop_times, calendar, calendar_dates, transfers), con
-      validazione dei campi obbligatori e messaggi d'errore chiari
-- [ ] `src/gtfs/calendar.py`: dato un `service_date`, l'insieme dei trip attivi,
-      gestendo `calendar.txt` e le eccezioni di `calendar_dates.txt`
-- [ ] `src/kb/rules.lp`: base di conoscenza in ASP
-  - [ ] `trasbordo_ammissibile/3` con tempo minimo dipendente dalla fermata
-  - [ ] trasbordo a piedi fra fermate distinte entro una soglia di distanza
-  - [ ] `accessibile/2` per utenti a ridotta mobilita', con le sue eccezioni
-  - [ ] `raggiungibile/2` come chiusura transitiva ricorsiva
-  - [ ] vincoli di integrita' che scartino i trasbordi incoerenti
-  - [ ] ricorsione e negazione stratificata evidenti e commentate
-- [ ] `src/kb/engine.py`: wrapper su clingo, materializza
-      `data/processed/transfers.parquet`
-- [ ] Misura di atomi generati, tempo di grounding e di solving al crescere del
-      numero di fermate, annotata in `docs/decisioni.md`
-- [ ] Test per `calendar.py` e per l'engine su un GTFS giocattolo
+- [x] `src/gtfs/loader.py`: lettura e validazione dell'archivio, con messaggi che
+      nominano file e colonna mancante
+- [x] `src/gtfs/calendar.py`: servizi e corse attive in una data di servizio,
+      con i due regimi di calendario e gli orari oltre le 24:00
+- [x] `src/kb/rules.lp`: base di conoscenza in ASP
+  - [x] `trasbordo_ammissibile/3` con tempo minimo dipendente dalla fermata
+  - [x] trasbordo a piedi entro soglia, con indice spaziale neutro
+  - [x] `accessibile/2` con eccezioni, non monotona
+  - [x] `raggiungibile/2` come chiusura transitiva ricorsiva
+  - [x] quattro vincoli di integrita', tutti dimostrabilmente violabili
+  - [x] negazione stratificata, documentata regola per regola
+- [x] `src/kb/engine.py`: wrapper clingo, fatti dal GTFS, `transfers.parquet`
+- [x] Curva di complessita' su entrambe le citta': `results/complessita_kb.csv`
+      e `results/complessita_kb.png`
+- [x] Sezioni "Rappresentazione della conoscenza" e "Complessita' della base di
+      conoscenza" in `docs/documentazione.md`
+- [x] Test su calendario, orari oltre le 24:00 e base di conoscenza
 
 ---
 

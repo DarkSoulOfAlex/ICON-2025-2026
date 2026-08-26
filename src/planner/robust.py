@@ -110,6 +110,15 @@ class Itinerario:
     citta: str
     partenza_richiesta: int
     tappe: tuple[Tappa, ...]
+    coda_a_piedi: int = 0
+    """Secondi di cammino dopo l'ultima discesa, per raggiungere la destinazione.
+
+    Va tenuto separato dalle tappe perche' non e' soggetto a ritardi: si cammina
+    sempre alla stessa velocita'. Ignorarlo pero' non e' innocuo, perche'
+    calcolerebbe la probabilita' di arrivare alla fermata di discesa invece che a
+    destinazione, sottostimando il tempo di viaggio di tutti gli itinerari che
+    terminano con un tratto a piedi - e sistematicamente a loro favore.
+    """
 
     @property
     def cambi(self) -> int:
@@ -118,7 +127,7 @@ class Itinerario:
 
     @property
     def arrivo_programmato(self) -> int:
-        return self.tappe[-1].alternative[0].arrivo_programmato
+        return self.tappe[-1].alternative[0].arrivo_programmato + self.coda_a_piedi
 
     @property
     def margini_programmati(self) -> tuple[int, ...]:
@@ -300,7 +309,9 @@ def probabilita_convoluzione(
             "la propagazione lungo la catena non conserva la probabilita'."
         )
 
-    entro = float(pmf[istanti <= scadenza].sum())
+    # La coda a piedi si sottrae dalla scadenza invece di traslare la
+    # distribuzione: e' equivalente e non perde massa ai bordi della griglia.
+    entro = float(pmf[istanti <= scadenza - itinerario.coda_a_piedi].sum())
     return EsitoProbabilita(
         probabilita=entro,
         metodo=f"convoluzione({passo}s)",
@@ -404,7 +415,7 @@ def probabilita_montecarlo(
                 )
         pronto = arrivo
 
-    entro = float((vivo & (pronto <= scadenza)).sum()) / campioni
+    entro = float((vivo & (pronto + itinerario.coda_a_piedi <= scadenza)).sum()) / campioni
     return EsitoProbabilita(
         probabilita=entro,
         metodo=f"montecarlo({campioni})",
@@ -502,7 +513,19 @@ def itinerario_da_cammino(
         )
         arrivo_precedente = pianificata.arrivo_programmato
 
-    return Itinerario(citta=grafo.citta, partenza_richiesta=partenza_richiesta, tappe=tuple(tappe))
+    # Cammino finale: dal momento in cui si scende dall'ultima corsa a quello in
+    # cui si e' davvero a destinazione.
+    ultimo_arrivo = int(grafo.evento_arrivo[eventi_per_tappa[-1][-1]])
+    coda = 0
+    if cammino and isinstance(cammino[-1], ATerra):
+        coda = max(0, int(cammino[-1].istante) - ultimo_arrivo)
+
+    return Itinerario(
+        citta=grafo.citta,
+        partenza_richiesta=partenza_richiesta,
+        tappe=tuple(tappe),
+        coda_a_piedi=coda,
+    )
 
 
 def _recuperi(
@@ -547,3 +570,95 @@ def _recuperi(
         if len(trovati) >= quanti:
             break
     return trovati
+
+
+# =============================================================================
+# Il pianificatore robusto
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class Candidato:
+    """Un itinerario valutabile, con i criteri deterministici che lo descrivono."""
+
+    itinerario: Itinerario
+    orario_arrivo: int
+    cambi: int
+    secondi_a_piedi: int
+
+
+def candidati_da_frontiera(grafo, esito_pareto, partenza_richiesta: int) -> list[Candidato]:
+    """Traduce la frontiera di Pareto della Fase 2 in candidati valutabili.
+
+    **Limite dichiarato.** Il pianificatore massimizza la probabilita' sulla
+    frontiera, non su tutti gli itinerari possibili: i due insiemi non
+    coincidono. La frontiera e' calcolata su criteri deterministici, e in linea
+    di principio potrebbe escludere un itinerario dominato sull'orario ma piu'
+    robusto. E' stato misurato quanto la probabilita' vari lungo la frontiera
+    proprio per stabilire se quell'insieme fosse abbastanza ricco: la risposta e'
+    riportata nella sezione della documentazione.
+    """
+    candidati: list[Candidato] = []
+    for etichetta in esito_pareto.frontiera:
+        cammino = esito_pareto.cammini.get(etichetta)
+        if not cammino:
+            continue
+        itinerario = itinerario_da_cammino(grafo, cammino, partenza_richiesta)
+        if itinerario is None:
+            continue
+        candidati.append(
+            Candidato(
+                itinerario=itinerario,
+                orario_arrivo=etichetta.orario_arrivo,
+                cambi=etichetta.cambi,
+                secondi_a_piedi=etichetta.secondi_a_piedi,
+            )
+        )
+    return candidati
+
+
+@dataclass
+class SceltaRobusta:
+    """L'itinerario che massimizza P(arrivo <= T), con la probabilita' di ciascuno."""
+
+    candidato: Candidato
+    probabilita: float
+    probabilita_per_candidato: list[float]
+    scadenza: int
+    secondi: float
+
+    @property
+    def itinerario(self) -> Itinerario:
+        return self.candidato.itinerario
+
+
+def pianifica_robusto(
+    candidati: list[Candidato],
+    modello: ModelloRitardo,
+    scadenza: int,
+    recuperi_massimi: int = 2,
+) -> SceltaRobusta:
+    """Sceglie l'itinerario con la massima P(arrivo <= scadenza).
+
+    Valutare tutti i candidati e' sostenibile proprio perche' la frontiera di
+    Pareto ne contiene pochi: mediamente cinque o sei. Su un insieme di
+    dimensione arbitraria questa strategia non sarebbe praticabile, ed e' la
+    ragione per cui il pianificatore si appoggia alla frontiera invece di
+    esplorare direttamente lo spazio degli itinerari.
+    """
+    if not candidati:
+        raise ErrorePianificatore("nessun itinerario candidato da valutare")
+
+    inizio = perf_counter()
+    probabilita = [
+        probabilita_convoluzione(c.itinerario, modello, scadenza, recuperi_massimi).probabilita
+        for c in candidati
+    ]
+    migliore = int(np.argmax(probabilita))
+    return SceltaRobusta(
+        candidato=candidati[migliore],
+        probabilita=probabilita[migliore],
+        probabilita_per_candidato=probabilita,
+        scadenza=scadenza,
+        secondi=perf_counter() - inizio,
+    )

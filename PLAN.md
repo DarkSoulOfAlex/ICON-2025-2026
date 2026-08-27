@@ -180,17 +180,29 @@ garanzia.
 
 ## Fase 4 — Pianificatore robusto e baseline
 
-- [ ] `src/planner/robust.py`: P(arrivo <= T) componendo le distribuzioni lungo
-      la catena delle coincidenze
-  - [ ] metodo per convoluzione numerica
-  - [ ] metodo per campionamento Monte Carlo
-  - [ ] misura dell'errore di approssimazione fra i due e del costo
-        computazionale
-  - [ ] ricerca dell'itinerario che massimizza la probabilita'
-- [ ] `src/planner/baselines.py`: piu' veloce sull'orario teorico; meno cambi;
-      margine fisso di 5 minuti su ogni coincidenza
-- [ ] Argomentazione del perche' l'obiettivo probabilistico non e' riducibile a
-      una penalizzazione del tempo di viaggio
+- [x] `src/planner/robust.py`: composizione delle probabilita' lungo la catena,
+      con recupero delle coincidenze perse invece del fallimento secco
+- [x] Convoluzione numerica e Monte Carlo, con la misura di errore e costo
+- [x] `src/planner/baselines.py`: piu' veloce, meno cambi, margine fisso di 5 min
+- [x] Pianificatore che massimizza P(arrivo <= T) sulla frontiera di Pareto
+- [x] Misura preliminare che giustifica l'insieme candidato (ampiezza 0,44)
+- [x] Griglia dei margini 0-30 min su 40 coppie per citta'
+- [x] `results/robusto_griglia_T.csv` e `.png`,
+      `results/conv_vs_montecarlo.csv` e `.png`
+- [x] Sezione "Pianificazione robusta" in `docs/documentazione.md`
+- [x] Test: forma chiusa, concordanza dei metodi, monotonia, guardia sulla massa,
+      recupero delle coincidenze, strategie di scelta
+- [x] Voci 49-55 del registro delle decisioni
+
+**Risultati principali** (modello dei ritardi SINTETICO, nessuno di questi e' un
+risultato sperimentale sui ritardi reali). La coincidenza fra scelta robusta e
+scelta piu' veloce scende dall'85-88% a margine nullo al 55-62% a trenta minuti:
+e' la dimostrazione che l'ordinamento fra itinerari dipende da T. Il guadagno ha
+forma a campana e culmina a 8-10 punti percentuali fra 15 e 20 minuti di margine,
+che e' il campo di applicabilita' del metodo. Il Monte Carlo domina la
+convoluzione su accuratezza e costo, ma la convoluzione resta perche' e'
+deterministica. La baseline del margine fisso e' la peggiore delle tre, perche' si
+difende dal rischio sbagliato.
 
 ---
 

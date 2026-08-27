@@ -1308,3 +1308,235 @@ cosi' l'origine di un risultato resta leggibile anche a distanza di mesi.
 il modello sintetico senza il permesso esplicito deve fallire con un messaggio che
 spiega perche'. Nessun file in `results/` deve riportare `sintetico` nella colonna
 del modello.
+
+---
+
+## Fase 4 — Pianificazione robusta
+
+### 49. Una coincidenza persa e' un ritardo, non un fallimento
+
+**Decisione.** Quando la catena perde una coincidenza, il calcolo prosegue sulla
+corsa successiva della stessa linea dalla stessa fermata, fino a un tetto di due
+recuperi. Solo esaurito il tetto l'itinerario fallisce.
+
+**Alternative considerate.** Il fallimento secco: perdere una coincidenza azzera
+la probabilita' di arrivo.
+
+**Motivo.** Il fallimento secco e' molto piu' semplice da calcolare, ma rende
+P(arrivo <= T) sistematicamente pessimistica e, soprattutto, **cancella il
+fenomeno che la domanda di ricerca vuole misurare**. Un itinerario e' robusto
+anche perche', quando perde una coincidenza, ne trova un'altra presto: e' una
+proprieta' della rete, non dell'itinerario preso singolarmente, e senza il
+recupero due itinerari con la stessa coincidenza tesa ma frequenze molto diverse
+risulterebbero identici.
+
+**Il tetto va dichiarato e misurato.** Sulle 1.920 valutazioni della griglia, la
+quota media di massa di probabilita' che esaurisce i recuperi e' **9,2%**: il
+tetto interviene in circa un caso su undici, abbastanza da meritare una menzione
+nel documento ma non tanto da governare i risultati. Sopra il 25% andrebbe
+alzato.
+
+**Come si potrebbe verificare.** Il test
+`test_una_coincidenza_persa_non_annulla_l_itinerario` costruisce una coincidenza
+impossibile da prendere e verifica che la probabilita' resti alta con una
+scadenza generosa, e che crolli disattivando i recuperi.
+
+---
+
+### 50. Due metodi di calcolo, e il Monte Carlo vince
+
+**Decisione.** Si implementano sia la convoluzione numerica su griglia temporale
+(passo di 10 secondi su quattro ore) sia il campionamento Monte Carlo, e li si
+confronta.
+
+**Motivo del confronto.** Servono due implementazioni indipendenti della stessa
+quantita' perche' nessuna delle due ha un valore di riferimento esterno: sulla
+catena a piu' coincidenze non esiste forma chiusa. La loro concordanza e' l'unica
+verifica non circolare disponibile, e la loro divergenza sarebbe il segnale che
+una delle due sbaglia.
+
+**Il risultato, che non era quello atteso.** Ci si attendeva che la convoluzione
+fosse il metodo esatto e il Monte Carlo l'approssimazione economica. La misura
+dice il contrario:
+
+| Metodo | Parametro | Errore | Costo |
+| --- | ---: | ---: | ---: |
+| convoluzione | passo 5 s | 0,0039 | 96 ms |
+| convoluzione | passo 10 s | 0,0049 | 89 ms |
+| Monte Carlo | 10.000 campioni | 0,0026 | 25 ms |
+| Monte Carlo | 100.000 campioni | 0,0011 | 151 ms |
+
+Il Monte Carlo con diecimila campioni e' **piu' accurato e quasi quattro volte
+piu' rapido** della convoluzione con passo di dieci secondi. La ragione e' che il
+costo della convoluzione non e' dominato dalla griglia temporale ma dal numero di
+interrogazioni al modello dei ritardi, una per bin di ritardo alla salita e per
+corsa candidata: raffinare la griglia temporale costa quasi nulla, ma il costo di
+base e' gia' superiore a quello del campionamento.
+
+**Perche' la convoluzione resta.** Restituisce un valore **deterministico**: due
+esecuzioni danno lo stesso numero, mentre il Monte Carlo ha rumore campionario.
+Per il pianificatore, che confronta candidati fra loro, il rumore potrebbe
+invertire l'ordine di due itinerari quasi equivalenti. La convoluzione e' percio'
+il metodo usato dal pianificatore, e il Monte Carlo quello usato per verificarla.
+
+**Come si potrebbe verificare.** `results/conv_vs_montecarlo.csv` e il test
+`test_i_due_metodi_concordano`.
+
+---
+
+### 51. La correlazione lungo la corsa e' un parametro, non una costante
+
+**Decisione.** `ModelloSintetico` accetta un parametro `correlazione` in [0, 1]
+che governa quanto il ritardo osservato a monte si trasferisce alla fermata di
+discesa. Il valore usato negli esperimenti e' 0,7.
+
+**Alternative considerate.** Cablare una correlazione fissa, o ignorare del tutto
+il campo `ritardo_a_monte`.
+
+**Motivo.** Ignorarlo renderebbe la catena artificialmente ottimistica, perche'
+tratterebbe come indipendenti il ritardo alla salita e quello alla discesa dello
+**stesso mezzo**, che indipendenti non sono. Cablare un valore significherebbe
+scrivere il resto del progetto attorno a un numero inventato: in Fase 3 il
+modello appreso avra' la correlazione che i dati mostrano, che potrebbe essere
+molto diversa.
+
+E' inoltre la leva con cui si controlla quanto due itinerari si distinguano fra
+loro, ed era il primo parametro da muovere se il pianificatore robusto e la
+baseline piu' veloce fossero coincisi sempre. Non e' stato necessario.
+
+**Come si potrebbe verificare.** A correlazione nulla il condizionamento non ha
+effetto e P(arrivo <= T) di una singola tappa coincide con la ripartizione del
+ritardo; e' esattamente l'ancoraggio usato dal test
+`test_una_sola_tappa_coincide_con_la_forma_chiusa`.
+
+---
+
+### 52. L'insieme candidato e' la frontiera di Pareto, e la misura che lo giustifica
+
+**Decisione.** Il pianificatore massimizza P(arrivo <= T) sulle soluzioni non
+dominate della Fase 2, non su tutti gli itinerari possibili.
+
+**Alternative considerate.** Generare, per ogni soluzione della frontiera, le
+varianti che partono con la corsa precedente o successiva sulla stessa linea,
+allargando l'insieme nella dimensione dei margini.
+
+**Motivo, e il dubbio che lo precedeva.** La frontiera e' calcolata su criteri
+deterministici - orario di arrivo, cambi, minuti a piedi - e **collassa gli
+itinerari che differiscono solo per il margine sulle coincidenze**, che e'
+precisamente la dimensione da cui dipende la robustezza. Massimizzare su un
+insieme privo delle alternative rilevanti non sarebbe un limite da dichiarare:
+sarebbe un esperimento incapace di rispondere alla domanda.
+
+Il dubbio e' stato risolto misurando, prima di costruire il pianificatore, quanto
+P vari lungo la frontiera. La risposta e' che varia molto: mediamente **0,44** di
+ampiezza fra la soluzione migliore e la peggiore, e solo **1 coppia su 14** sotto
+0,05. La frontiera e' quindi abbastanza ricca, e l'allargamento non e' stato
+implementato.
+
+**Una distinzione metodologica che vale la pena riportare.** La prima versione
+della misura dava un'ampiezza di **0,66**, ed era **viziata**: includeva
+itinerari il cui arrivo *programmato* cadeva gia' dopo la scadenza, che hanno
+probabilita' prossima a zero per costruzione. Quella misura non rispondeva alla
+domanda posta, perche' registrava soprattutto che un itinerario piu' lento arriva
+piu' tardi - il che non e' una scoperta - invece di quanto due itinerari
+ugualmente plausibili si distinguano in affidabilita'. Restringendo agli
+itinerari **nominalmente fattibili** il valore scende a 0,44, ed e' quello il
+numero che risponde. Vale la pena registrarli entrambi: la differenza fra 0,66 e
+0,44 e' esattamente la velocita' travestita da robustezza.
+
+**Come si potrebbe verificare.** La colonna `ampiezza_frontiera` di
+`results/robusto_griglia_T.csv`, calcolata sui soli candidati nominalmente
+fattibili.
+
+---
+
+### 53. La scadenza e' relativa all'itinerario piu' veloce
+
+**Decisione.** T = orario di arrivo dell'itinerario piu' veloce + un margine, e
+il margine varia su una griglia di 0, 5, 10, 15, 20 e 30 minuti.
+
+**Alternative considerate.** Una scadenza assoluta, per esempio l'orario di un
+appuntamento.
+
+**Motivo.** La domanda di ricerca parla di confronto "a parita' di tempo di
+viaggio nominale", e una scadenza ancorata all'itinerario piu' veloce e'
+esattamente questo. Una scadenza assoluta introdurrebbe una scelta arbitraria
+sull'appuntamento, e i risultati dipenderebbero da quella invece che dal metodo.
+
+Va riconosciuto che questa definizione **e' severa verso il criterio
+probabilistico**: ogni itinerario piu' lento di Delta sull'orario deve recuperare
+Delta prima ancora di competere, quindi il piu' veloce parte avvantaggiato per
+costruzione. E' aritmetica della definizione, non una proprieta' del modello, ed
+e' la ragione per cui il vantaggio misurato va letto come un minimo e non come
+una stima centrata.
+
+La griglia e' preferita a un singolo valore perche' **le tre grandezze in
+funzione del margine sono la dimostrazione di non riducibilita'**: mostrano che
+l'ordinamento fra itinerari dipende da T su un campione di ottanta coppie, non su
+un esempio scelto ad arte.
+
+**Come si potrebbe verificare.** Se la coincidenza fra pianificatore robusto e
+baseline piu' veloce fosse rimasta vicina al 100% su tutta la griglia, la
+definizione di T sarebbe stata troppo severa e l'insieme candidato andava
+ristretto agli itinerari entro una tolleranza dal piu' veloce. La coincidenza
+misurata va dall'88% a margine nullo al 55% a trenta minuti, quindi la
+restrizione non e' stata necessaria.
+
+---
+
+### 54. Un test che falliva a intermittenza non e' stato archiviato
+
+**Decisione.** Il modello sintetico deriva i parametri di ogni linea da
+`hashlib.blake2b` e non dalla funzione `hash` incorporata.
+
+**Motivo, e il modo in cui e' emerso.** Un test deterministico ha cominciato a
+fallire in circa due esecuzioni su tre della suite completa, passando sempre
+quando eseguito da solo. La tentazione naturale, di fronte a un test che "a volte
+fallisce", e' allargarne la tolleranza o dichiararlo instabile.
+
+La causa era invece un difetto vero: `ModelloSintetico` usava
+`hash((seme, route_id))` per derivare i parametri della distribuzione, e **Python
+randomizza l'hash delle stringhe a ogni processo**. Lo stesso identificativo di
+linea produceva parametri diversi a ogni esecuzione. Il modello si dichiarava
+deterministico dato un seme e non lo era, e la verifica che avevo fatto - due
+chiamate nello stesso processo - era proprio quella incapace di rivelarlo.
+
+Le conseguenze sarebbero andate ben oltre il test: **ogni esperimento della Fase
+4 sarebbe stato irriproducibile**, e il difetto si sarebbe manifestato solo come
+numeri che cambiano fra un'esecuzione e l'altra senza alcuna spiegazione, in un
+documento che dichiara la riproducibilita' fra i propri requisiti.
+
+E' una voce che dice qualcosa sul metodo prima che sul codice: un test
+deterministico che fallisce a intermittenza **non e' un test instabile, e' un
+programma non deterministico**, e la differenza fra le due letture e' la
+differenza fra trovare il difetto e nasconderlo.
+
+**Come si potrebbe verificare.** Eseguire tre processi separati e confrontare la
+media della distribuzione per la stessa tratta: deve essere identica alla sesta
+cifra. Prima della correzione non lo era.
+
+---
+
+### 55. Il tratto a piedi finale entra nel tempo di viaggio
+
+**Decisione.** L'itinerario porta un campo `coda_a_piedi` con i secondi di
+cammino dopo l'ultima discesa, e tutti i calcoli di probabilita' ne tengono
+conto.
+
+**Motivo.** La prima versione del convertitore costruiva le tappe dai soli tratti
+percorsi a bordo, quindi calcolava la probabilita' di arrivare **alla fermata di
+discesa** invece che a destinazione. Sul campione di Torino il **54% dei
+candidati termina con un tratto a piedi**: per piu' della meta' degli itinerari
+il tempo di viaggio era sottostimato, e sistematicamente a favore proprio di
+quelli che camminano di piu'. Il confronto fra strategie ne sarebbe uscito
+falsato nella direzione peggiore, perche' la strategia del margine fisso tende a
+scegliere itinerari con piu' cammino.
+
+Il tratto a piedi resta separato dalle tappe perche' non e' soggetto a ritardi:
+si cammina sempre alla stessa velocita', e trattarlo come una tappa gli
+attribuirebbe una varianza che non ha.
+
+**Come si potrebbe verificare.** Dopo la correzione, l'orario di arrivo
+ricostruito dall'itinerario coincide esattamente con quello dell'etichetta di
+Pareto su tutti i 106 candidati esaminati. Prima della correzione i due valori
+divergevano su tutti gli itinerari con coda a piedi.

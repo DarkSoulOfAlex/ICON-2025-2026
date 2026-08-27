@@ -927,3 +927,317 @@ concesso il permesso esplicito; e ogni file di risultati porta il nome del model
 che lo ha prodotto, cosi' l'origine resta leggibile anche a distanza di mesi.
 **Nessun risultato riportato in questo documento e' stato prodotto con il modello
 sintetico.**
+
+---
+
+## Pianificazione robusta
+
+> **Avvertenza sui risultati di questa sezione.** Il modello dei ritardi
+> utilizzato qui e' **sintetico**: le distribuzioni sono inventate, non apprese
+> dai dati raccolti sul campo, che alla data di scrittura non erano ancora
+> sufficienti. I numeri riportati qualificano il **metodo** - se il calcolo e'
+> corretto, quanto costa, in quali condizioni il criterio probabilistico cambia
+> la scelta - e non dicono nulla sul trasporto pubblico di Roma o di Torino.
+> Ogni file di risultato porta il nome del modello in una colonna, e gli script
+> si rifiutano di scrivere senza un permesso esplicito. I risultati sperimentali
+> veri sono oggetto della Fase 5.
+
+### Perche' l'obiettivo probabilistico non e' una penalizzazione del tempo
+
+La tentazione naturale, di fronte al problema, e' evitare la probabilita' e
+correggere l'orario: penalizzare gli itinerari con coincidenze tese, per esempio
+sommando al tempo di viaggio un termine proporzionale alla strettezza dei
+margini. Sarebbe piu' semplice e non richiederebbe alcun modello dei ritardi.
+
+Non funziona, e la ragione non e' di accuratezza ma di struttura. Una
+penalizzazione della forma "tempo di viaggio piu' lambda per la tensione delle
+coincidenze" induce **un solo ordinamento** sugli itinerari: fissato lambda,
+esiste un migliore, ed e' sempre lo stesso. La quantita' P(arrivo <= T) induce
+invece **una famiglia di ordinamenti indicizzata da T**, e nessuna scelta di
+lambda puo' riprodurre una famiglia con un elemento solo.
+
+L'inversione si vede su due itinerari costruiti apposta. Il primo, A, arriva
+cinquanta minuti dopo la partenza secondo l'orario, ma la sua unica coincidenza
+ha due minuti di margine. Il secondo, B, arriva cinquantacinque minuti dopo, con
+dodici minuti di margine.
+
+| Scadenza T | P(A) | P(B) | Migliore |
+| ---: | ---: | ---: | :---: |
+| +50 min | 0,078 | 0,000 | A |
+| +55 min | 0,337 | 0,236 | A |
+| +60 min | 0,498 | 0,827 | **B** |
+| +70 min | 0,912 | 0,990 | **B** |
+| +120 min | 0,998 | 1,000 | **B** |
+
+Per una scadenza stretta vince A, perche' B non puo' proprio arrivare in tempo:
+il suo orario di arrivo programmato e' gia' oltre la scadenza. Per una scadenza
+appena piu' larga vince B, e con distacco, perche' la coincidenza di A salta
+troppo spesso. Nessun ordinamento fisso puo' contenere entrambe le risposte.
+
+L'esempio rende immediato il meccanismo ma resta un caso costruito. Il risultato
+vero e' la misura su un campione, riportata piu' avanti: le tre curve in funzione
+della scadenza mostrano che l'ordinamento dipende da T su ottanta coppie
+origine-destinazione, non su due itinerari scelti ad arte.
+
+### La catena delle coincidenze, e perche' il prodotto ingenuo sbaglia
+
+Calcolare P(arrivo <= T) richiede di comporre le distribuzioni di ritardo lungo
+la successione delle tappe. La composizione ovvia - il prodotto delle
+probabilita' di prendere ciascuna coincidenza - e' sbagliata per due ragioni di
+segno opposto, e nessuna delle due e' trascurabile.
+
+**Sovrastima**, perche' tratta come indipendenti eventi che non lo sono. Il
+ritardo con cui un mezzo arriva alla fermata di discesa non e' indipendente da
+quello con cui e' partito: e' lo stesso veicolo, e i ritardi si accumulano lungo
+il percorso. La probabilita' congiunta di due coincidenze prese non e' il
+prodotto delle marginali.
+
+**Sottostima**, perche' considera fallimento definitivo una coincidenza persa.
+Chi perde un autobus prende quello successivo e arriva piu' tardi, il che puo'
+benissimo essere ancora entro T. Ignorare il recupero cancella proprio il
+fenomeno che la domanda di ricerca vuole misurare: un itinerario e' robusto anche
+perche', quando perde una coincidenza, ne trova un'altra presto. E' una proprieta'
+della rete e non del singolo itinerario, e senza il recupero due itinerari con la
+stessa coincidenza tesa ma frequenze molto diverse risulterebbero identici.
+
+La struttura corretta e' **markoviana con azzeramento**. Presa una coincidenza,
+l'arrivo a valle dipende dal ritardo del nuovo mezzo e non da quanto per poco la
+si e' presa: l'informazione sul ritardo precedente si perde attraversando il
+cambio. Il ritardo si propaga percio' *dentro* una corsa, non *fra* una corsa e
+la successiva, e la catena va rappresentata come una successione di tappe in cui,
+a ciascuna, si sceglie quale corsa si riesca effettivamente a prendere fra quella
+pianificata e i recuperi disponibili.
+
+Il condizionamento fra salita e discesa e' esplicito: la distribuzione del
+ritardo alla discesa viene richiesta al modello passandogli il ritardo alla
+salita. E' il punto in cui il calcolo smette di trattare come indipendenti eventi
+che non lo sono, ed e' anche la ragione per cui l'interfaccia del modello dei
+ritardi prevede fin dall'inizio un campo per il ritardo a monte.
+
+Il numero di recuperi e' limitato a due, e il limite non e' innocuo: va misurato.
+Sulle 1.920 valutazioni della griglia sperimentale, la quota media di massa di
+probabilita' che esaurisce i recuperi disponibili e' del **9,2%**, cioe' circa un
+caso su undici. E' abbastanza da meritare questa menzione e non abbastanza da
+governare i risultati; oltre un quarto il tetto direbbe piu' sul proprio valore
+che sul mondo.
+
+### Convoluzione numerica contro Monte Carlo
+
+La stessa quantita' e' calcolata in due modi indipendenti. La **convoluzione
+numerica** propaga le distribuzioni su una griglia temporale discreta, calcolando
+per ogni corsa candidata la probabilita' che sia la prima che si riesce a
+prendere. Il **campionamento Monte Carlo** simula la catena molte volte e conta.
+
+Averne due non e' ridondanza. Sulla catena a piu' coincidenze non esiste una
+forma chiusa contro cui verificare il risultato, e la concordanza fra due
+implementazioni che non condividono nulla e' l'unica verifica non circolare
+disponibile. L'unico caso con soluzione analitica - una sola tappa, senza
+correlazione, con la corsa sempre prendibile - e' usato come ancoraggio nei test,
+e li' entrambi i metodi coincidono con la ripartizione del ritardo entro due
+punti percentuali.
+
+Tabella 9 - Accuratezza e costo dei due metodi. L'errore e' lo scarto rispetto a
+un Monte Carlo con 200.000 campioni, media su tutte le valutazioni della griglia.
+
+| Metodo | Parametro | Errore su P | Costo per valutazione |
+| --- | ---: | ---: | ---: |
+| convoluzione | passo 5 s | 0,0039 ± 0,0047 | 96 ms |
+| convoluzione | passo 10 s | 0,0049 ± 0,0060 | 89 ms |
+| convoluzione | passo 30 s | 0,0165 ± 0,0148 | 87 ms |
+| convoluzione | passo 60 s | 0,0385 ± 0,0293 | 87 ms |
+| Monte Carlo | 100 campioni | 0,0271 ± 0,0225 | 3 ms |
+| Monte Carlo | 1.000 campioni | 0,0107 ± 0,0092 | 8 ms |
+| Monte Carlo | 10.000 campioni | 0,0026 ± 0,0021 | 25 ms |
+| Monte Carlo | 100.000 campioni | 0,0011 ± 0,0008 | 151 ms |
+
+**Il risultato non e' quello atteso.** Ci si aspettava che la convoluzione fosse
+il metodo esatto e il campionamento l'approssimazione economica. La misura dice
+il contrario: il Monte Carlo con diecimila campioni e' **piu' accurato e quasi
+quattro volte piu' rapido** della convoluzione con passo di dieci secondi, e la
+domina su entrambi gli assi per ogni scelta dei parametri.
+
+La spiegazione sta in dove finisce il tempo. Il costo della convoluzione non e'
+dominato dalla griglia temporale ma dal numero di interrogazioni al modello dei
+ritardi: una per ogni bin di ritardo alla salita e per ogni corsa candidata,
+perche' ognuna richiede la distribuzione condizionata corrispondente. Raffinare
+la griglia temporale da sessanta a cinque secondi costa nove millisecondi, ma il
+costo di base e' gia' superiore a quello del campionamento con diecimila
+estrazioni. Lo si vede nel pannello (b) della Figura 3, dove la curva della
+convoluzione e' quasi verticale: si guadagna accuratezza quasi gratis, ma partendo
+da un costo piu' alto.
+
+La convoluzione resta comunque il metodo usato dal pianificatore, per una
+proprieta' che l'errore medio non cattura: e' **deterministica**. Due esecuzioni
+danno lo stesso numero, mentre il Monte Carlo ha rumore campionario. Un
+pianificatore che confronta cinque candidati fra loro puo' vedere invertito
+l'ordine di due itinerari quasi equivalenti dal solo rumore, e la scelta
+diventerebbe irriproducibile. Il campionamento e' percio' relegato al ruolo di
+verifica, che e' quello in cui la sua accuratezza superiore serve davvero.
+
+![Convoluzione contro Monte Carlo](../results/conv_vs_montecarlo.png)
+
+**Figura 3.** Accuratezza e costo dei due metodi di calcolo, su distribuzioni
+sintetiche. Nel pannello (a) l'asse orizzontale porta il parametro di ciascun
+metodo, che ha significato diverso per i due: passo della griglia in secondi per
+la convoluzione, numero di campioni per il Monte Carlo. Il pannello (b) e' quello
+che conta: mette accuratezza e costo sugli stessi assi, e mostra che la curva del
+Monte Carlo giace interamente in basso a sinistra rispetto a quella della
+convoluzione. Dati grezzi in `results/conv_vs_montecarlo.csv`.
+
+### L'insieme dei candidati, e la misura che lo giustifica
+
+Il pianificatore massimizza P(arrivo <= T) sulle soluzioni non dominate prodotte
+dalla ricerca multi-criterio della Fase 2, che sono in media fra cinque e sei per
+ogni coppia origine-destinazione. Valutarle tutte e' sostenibile proprio perche'
+sono poche.
+
+Il limite va dichiarato, ed e' piu' affilato di quanto sembri a prima vista. La
+frontiera di Pareto e' calcolata su criteri deterministici - orario di arrivo,
+numero di cambi, minuti a piedi - e **collassa fra loro gli itinerari che
+differiscono solo per il margine sulle coincidenze**, che e' precisamente la
+dimensione da cui dipende la robustezza. Massimizzare su un insieme privo delle
+alternative rilevanti non sarebbe un limite da dichiarare in una nota: sarebbe un
+esperimento incapace di rispondere alla domanda posta.
+
+Il dubbio e' stato risolto prima di costruire il pianificatore, misurando quanto
+P vari lungo la frontiera. La risposta e' che varia molto: l'ampiezza fra la
+soluzione migliore e la peggiore e' mediamente di **0,44**, e solo una coppia su
+quattordici sta sotto 0,05. La frontiera e' quindi abbastanza ricca, e
+l'allargamento dell'insieme candidato - che era la contromisura preparata - non
+si e' reso necessario.
+
+Vale la pena riferire che la **prima versione di questa misura era viziata**, e
+perche'. Includeva fra i candidati anche gli itinerari il cui arrivo *programmato*
+cadeva gia' dopo la scadenza, che hanno probabilita' prossima a zero per
+costruzione: l'ampiezza risultava di 0,66, ma quel numero registrava soprattutto
+che un itinerario piu' lento arriva piu' tardi, il che non e' una scoperta.
+Restringendo ai soli itinerari **nominalmente fattibili** il valore scende a 0,44,
+ed e' quello a rispondere alla domanda. La differenza fra i due numeri e'
+esattamente la velocita' travestita da robustezza.
+
+### La scadenza, e la griglia che dimostra la non riducibilita'
+
+La scadenza e' definita come **orario di arrivo dell'itinerario piu' veloce piu'
+un margine**, e il margine varia su una griglia di zero, cinque, dieci, quindici,
+venti e trenta minuti. La definizione relativa aderisce alla domanda di ricerca,
+che parla di confronto "a parita' di tempo di viaggio nominale"; una scadenza
+assoluta avrebbe introdotto una scelta arbitraria sull'orario dell'appuntamento,
+e i risultati avrebbero dipeso da quella invece che dal metodo.
+
+Va riconosciuto che questa definizione e' **severa verso il criterio
+probabilistico**: ogni itinerario piu' lento di un certo scarto sull'orario deve
+recuperare quello scarto prima ancora di poter competere, quindi il piu' veloce
+parte avvantaggiato per costruzione. E' aritmetica della definizione, non una
+proprieta' del modello, e implica che il vantaggio misurato vada letto come un
+limite inferiore.
+
+Tabella 10 - Le tre grandezze al variare del margine sulla scadenza, su quaranta
+coppie origine-destinazione per citta'. Il guadagno e' la differenza media fra la
+probabilita' della scelta robusta e quella della baseline piu' veloce.
+
+| Citta' | Margine | Ampiezza sulla frontiera | Coincidenza | Guadagno su piu' veloce |
+| --- | ---: | ---: | ---: | ---: |
+| Roma | 0 min | 0,026 ± 0,042 | 85% | 0,001 ± 0,003 |
+| Roma | 5 min | 0,279 ± 0,266 | 82% | 0,040 ± 0,123 |
+| Roma | 10 min | 0,371 ± 0,269 | 75% | 0,068 ± 0,158 |
+| Roma | 15 min | 0,425 ± 0,268 | 75% | 0,080 ± 0,188 |
+| Roma | 20 min | 0,433 ± 0,279 | 70% | 0,084 ± 0,190 |
+| Roma | 30 min | 0,562 ± 0,302 | 62% | 0,049 ± 0,104 |
+| Torino | 0 min | 0,024 ± 0,027 | 88% | 0,009 ± 0,050 |
+| Torino | 5 min | 0,290 ± 0,270 | 80% | 0,040 ± 0,147 |
+| Torino | 10 min | 0,376 ± 0,251 | 75% | 0,058 ± 0,152 |
+| Torino | 15 min | 0,452 ± 0,251 | 70% | 0,098 ± 0,210 |
+| Torino | 20 min | 0,429 ± 0,265 | 68% | 0,096 ± 0,191 |
+| Torino | 30 min | 0,478 ± 0,271 | 55% | 0,061 ± 0,120 |
+
+Le tre colonne, lette insieme, sono la dimostrazione di non riducibilita'
+annunciata sopra. La coincidenza fra la scelta robusta e quella piu' veloce
+**scende monotonamente** dall'85-88% a margine nullo al 55-62% a trenta minuti:
+al variare della sola scadenza, a parita' di rete, di orario e di modello dei
+ritardi, il criterio probabilistico cambia idea su una frazione crescente delle
+coppie. Nessun ordinamento fisso sugli itinerari puo' produrre questo
+comportamento.
+
+Il guadagno **non e' monotono**, e la sua forma a campana e' il risultato piu'
+informativo della sezione. A margine nullo vale praticamente zero, perche' la
+scadenza coincide con l'arrivo programmato del piu' veloce e nessun itinerario ha
+speranze apprezzabili: non c'e' niente da guadagnare quando tutti falliscono. A
+trenta minuti torna a scendere, perche' la scadenza e' cosi' larga che quasi tutti
+arrivano: non c'e' niente da guadagnare nemmeno quando tutti riescono. Il massimo
+sta fra i quindici e i venti minuti, dove il criterio probabilistico guadagna fra
+otto e dieci punti percentuali di probabilita' di arrivo.
+
+Questo non e' un limite del metodo ma il suo **campo di applicabilita'**, e va
+letto cosi': il ragionamento probabilistico serve quando la scadenza e' abbastanza
+stretta da rendere il fallimento possibile e abbastanza larga da rendere il
+successo raggiungibile. Fuori da quell'intervallo la risposta non dipende dal
+criterio, e un modello dei ritardi non ripaga la propria complessita'.
+
+![Pianificazione robusta al variare della scadenza](../results/robusto_griglia_T.png)
+
+**Figura 4.** Le tre grandezze in funzione del margine sulla scadenza, su
+quaranta coppie per citta' e con modello dei ritardi sintetico. Il pannello (b) e'
+la dimostrazione di non riducibilita': la coincidenza fra scelta robusta e scelta
+piu' veloce scende al crescere del margine, quindi l'ordinamento fra itinerari
+dipende dalla scadenza. Il pannello (c) mostra la forma a campana del guadagno.
+Le barre di deviazione standard del pannello (c) scendono sotto lo zero, ma si
+tratta di un artefatto: la deviazione standard e' simmetrica mentre la
+distribuzione non lo e', e la differenza per singola coppia non e' **mai**
+negativa, in nessuna delle 480 combinazioni esaminate. Dati grezzi in
+`results/robusto_griglia_T.csv`.
+
+### Le baseline, e cosa ciascuna rappresenta
+
+Le tre strategie di riferimento non sono avversari di comodo: rappresentano cio'
+che si fa realmente in assenza di un modello dei ritardi. La **piu' veloce** e' il
+pianificatore di qualunque applicazione di viaggio, ed e' il termine di paragone
+naturale perche' e' quello che l'utente ha oggi. **Meno cambi** e' cio' che fa chi
+ha imparato per esperienza che ogni trasbordo e' un'occasione di perdere una
+coincidenza, ma non sa quantificarlo. Il **margine fisso** e' la baseline che
+conta: rappresenta la persona ragionevole che si da' una regola - accetto solo
+itinerari in cui ogni coincidenza ha almeno cinque minuti di margine, e fra quelli
+prendo il piu' veloce. E' una strategia sensata e gratuita, ed e' quella che il
+pianificatore probabilistico deve battere per giustificare la propria esistenza.
+
+Tutte e quattro le strategie scelgono dallo stesso insieme di candidati e vengono
+valutate con lo stesso calcolo di P(arrivo <= T): il confronto misura quindi la
+strategia di scelta e non il metodo di valutazione.
+
+Tabella 11 - Probabilita' media di arrivo entro la scadenza, su tutte le coppie e
+tutti i margini della griglia.
+
+| Strategia | Roma | Torino |
+| --- | ---: | ---: |
+| robusto | **0,555 ± 0,374** | **0,570 ± 0,367** |
+| piu' veloce | 0,501 ± 0,363 | 0,509 ± 0,373 |
+| meno cambi | 0,429 ± 0,411 | 0,388 ± 0,418 |
+| margine fisso | 0,403 ± 0,418 | 0,426 ± 0,420 |
+
+Due osservazioni, di cui la seconda inattesa.
+
+La prima e' che il pianificatore robusto **non perde mai** contro nessuna
+baseline: su tutte e 480 le combinazioni di citta', coppia e margine, la sua
+probabilita' e' maggiore o uguale a quella di ciascuna alternativa. Va detto pero'
+che questo non e' un risultato ma un **controllo di correttezza**: le quattro
+strategie scelgono dallo stesso insieme e il pianificatore massimizza per
+definizione la grandezza con cui tutte vengono poi valutate, quindi perdere
+sarebbe stato un difetto dell'implementazione. Il risultato e' semmai di quanto
+vince, che e' il contenuto della Tabella 10.
+
+La seconda e' che la strategia del **margine fisso e' la peggiore delle tre**,
+sotto perfino a "meno cambi" su Roma. Il fatto merita attenzione perche'
+contraddice l'intuizione, ed e' spiegabile: con una scadenza ancorata all'arrivo
+del piu' veloce, imporre cinque minuti di margine su ogni coincidenza costringe a
+scegliere itinerari sensibilmente piu' lenti sull'orario, e lo svantaggio di
+partenza supera il beneficio della maggiore affidabilita'. La regola del margine
+fisso e' una difesa contro le coincidenze perse che non guarda alla scadenza, e in
+un problema in cui la scadenza e' il vincolo si difende dal rischio sbagliato.
+E' precisamente il tipo di errore che un criterio probabilistico esplicito evita,
+perche' P(arrivo <= T) contiene T e la regola dei cinque minuti no.
+
+Va ricordato un'ultima volta che tutti questi numeri sono calcolati su ritardi
+inventati. Dicono che il metodo distingue gli itinerari, che il calcolo e'
+corretto e riproducibile, e in quale intervallo di scadenze il criterio
+probabilistico cambia le decisioni. Se il vantaggio misurato qui si conservi sui
+ritardi reali di Roma e di Torino e' esattamente la domanda a cui la Fase 5 dovra'
+rispondere, ed e' l'unica risposta che varra' come risultato sperimentale.

@@ -6,8 +6,9 @@ intero prima di scrivere codice.
 ## Cos'e' questo progetto
 
 Progetto per il corso di Ingegneria della Conoscenza (ICon), Universita' di Bari.
-Due studenti, budget complessivo circa 50 ore. Esame individuale e orale: ogni
-scelta tecnica deve essere difendibile a voce da entrambi.
+Due studenti, budget complessivo circa 50 ore. La valutazione avviene su prova
+scritta e sul documento consegnato: ogni scelta tecnica deve essere difendibile
+per iscritto da entrambi.
 
 **Obiettivo.** Un pianificatore di viaggi sul trasporto pubblico locale che,
 invece di minimizzare l'orario teorico di arrivo, massimizza la PROBABILITA' di
@@ -94,7 +95,8 @@ dati, un'approssimazione) va annotata in `docs/decisioni.md` con questo formato:
 smentirebbe la scelta.
 ```
 
-E' la parte piu' importante del progetto: e' cio' che si porta all'orale.
+E' la parte piu' importante del progetto: e' la materia prima delle sottosezioni
+"Decisioni di Progetto" del documento finale, una per ogni argomento trattato.
 
 ## Convenzioni di codice
 

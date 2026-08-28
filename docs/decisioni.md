@@ -416,8 +416,7 @@ thread.
 **Motivo.** Con due o tre citta' e un timeout di 20 s, il caso peggiore resta
 ampiamente dentro l'intervallo di 60 s, e il codice sequenziale non ha stato
 condiviso da proteggere: e' piu' semplice da leggere, da collaudare e da
-difendere all'orale. Il parallelismo si giustificherebbe solo con molte piu'
-citta'.
+motivare. Il parallelismo si giustificherebbe solo con molte piu' citta'.
 
 **Come si potrebbe verificare.** Misurare la durata dei giri sul manifest. Se il
 log iniziasse a riportare tick saltati, il sequenziale non basterebbe piu'.
@@ -877,7 +876,7 @@ per rispondere a domande che il pianificatore pone di rado.
 
 Il fatto che la scelta si possa compiere a valle, disattivando un interruttore
 invece di riformulare le regole, e' una conseguenza diretta della natura
-dichiarativa della rappresentazione ed e' argomento da portare all'orale.
+dichiarativa della rappresentazione.
 
 **Come si potrebbe verificare.** In Fase 2, contare quante volte il grafo
 tempo-espanso interroghi effettivamente la raggiungibilita' globale. Se il numero

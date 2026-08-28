@@ -2075,6 +2075,23 @@ estremi, 26,7% contro 11,6%. **E' la conferma sperimentale che a far fallire il
 greedy sia il budget globale**, perche' allentando quello e lasciando tutto il
 resto invariato il fallimento si dirada.
 
+**Le righe non hanno tutte lo stesso peso, e la percentuale da sola non lo dice.**
+La quota di fallimento e' calcolata sulle sole istanze risolubili, e quel
+denominatore varia moltissimo lungo la tabella: a margine tre poggia su 43 e 42
+casi, a margine zero su 15 e 15. Le due righe a margine zero, che sono anche
+quelle con le percentuali piu' alte, sono percio' le **meno solide** della
+tabella: il 26,7% di Roma sono quattro casi su quindici e il 40,0% di Torino sei
+su quindici, e uno o due casi in piu' o in meno sposterebbero la percentuale di
+sei o sette punti. Vanno lette come indicazione della direzione, non come stima
+del valore. Le righe a margine due e tre, con denominatori fra 37 e 43, reggono
+invece un'interpretazione quantitativa. La stessa cautela vale per la Tabella 13,
+dove il 33,3% di Roma a quattro tappe sono **quattro casi su dodici**, mentre
+l'11,8% a due tappe poggia su 68: la monotonia della colonna e' significativa
+perche' si presenta identica su entrambe le citta', ma il valore dell'ultima riga
+di Roma non lo e' altrettanto. In generale, in queste due tabelle il denominatore
+cala proprio dove la percentuale cresce, e leggere le percentuali senza guardare
+la colonna "risolubili" porterebbe a sopravvalutare gli estremi.
+
 Va notato che il fallimento **non scompare** nemmeno a margine tre, dove resta
 all'11,6% e al 7,1%. Il tetto continua a stringere in qualche istanza anche
 quando e' generoso, il che e' coerente con il fatto che il minimo per tratta e' un
@@ -2106,8 +2123,8 @@ due ragioni distinte che vale la pena separare: le catene lunghe sono meno
 numerose, perche' alcune si interrompono prima; e a parita' di margine un viaggio
 con piu' tappe ha piu' vincoli da soddisfare contemporaneamente. Il calo e' piu'
 marcato a Roma, dove restano dodici istanze risolubili su quarantaquattro a
-quattro tappe, e su numeri cosi' piccoli il 33,3% va letto per quello che e':
-quattro casi su dodici, un'indicazione forte ma non una stima precisa.
+quattro tappe: e' la riga a cui si applica la cautela enunciata sopra sulla
+sottigliezza della base.
 
 **Il costo della risoluzione e' trascurabile, e la conseguenza non e' ovvia.** Il
 risolutore completo esplora in media 209 assegnazioni parziali, con un massimo di

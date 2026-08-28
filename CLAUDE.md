@@ -145,6 +145,7 @@ src/kb/                base di conoscenza in ASP
 src/graph/             grafo tempo-espanso e ricerca
 src/delays/            modello probabilistico dei ritardi
 src/planner/           pianificatore robusto e baseline
+src/csp/               viaggio multi-tappa come soddisfacimento di vincoli
 src/eval/              backtesting, metriche, report
 scripts/               strumenti di verifica eseguibili a mano
 tests/

@@ -72,7 +72,8 @@ esiste da nessuna parte e va costruito giorno per giorno. Di conseguenza:
 **Ancora aperto:**
 
 - [ ] Copia di sicurezza di `data/` su un secondo supporto (~1,3 GB al giorno)
-- [ ] Verifica della copertura dopo il primo giorno pieno
+- [x] Verifica della copertura dopo il primo giorno pieno: il 27 agosto la
+      copertura reale e' del 100% su entrambe le citta'
 
 ---
 
@@ -159,7 +160,30 @@ garanzia.
 
 ## Fase 3 — Modello dei ritardi
 
-**Prerequisito: almeno due settimane di raccolta continua.**
+**Prerequisito: almeno due settimane di raccolta continua.** Raccolta avviata il
+2026-08-25, chiusura prevista intorno al 9-10 settembre 2026.
+
+**Ampliata con la rete bayesiana (proposta A approvata), a cui sono state
+riassegnate le 13 ore liberate dalla Fase 5-bis.** La rete rappresenta
+esplicitamente la dipendenza fra ritardo a monte, linea, fascia oraria, tipo di
+giorno, posizione lungo la corsa e ritardo a valle, e sostituisce con una
+distribuzione condizionata appresa il parametro di correlazione 0,7 inventato in
+Fase 4. Copre il cap. 9 con il formalismo che gli e' proprio, oggi assente.
+
+- [ ] **Per primo:** test della proprieta' markoviana, cioe' se il ritardo due
+      fermate a monte aggiunga informazione dato quello a una fermata a monte. Se
+      non fosse prossima a zero cambierebbe la struttura della rete, e non va
+      scoperto dopo aver stimato le tabelle di probabilita'
+- [ ] `Tratta` riceve `sequenza_a_monte: int | None = None` in coda,
+      retrocompatibile come lo fu `ritardo_a_monte`; da annotare in
+      `docs/decisioni.md` come interfaccia congelata e riaperta, con il motivo
+- [ ] Stima delle tabelle con scala di risalita e priore di Dirichlet;
+      concentrazione tarata su giorni non usati per la stima
+- [ ] `ModelloBayesiano(ModelloRitardo)` piu' una `Distribuzione` da massa discreta
+- [ ] Confronto fra rete e modello parametrico su log-loss e calibrazione, media
+      e deviazione standard **sui giorni**
+- [ ] Confronto fra la correlazione 0,7 inventata in Fase 4 e il valore che i dati
+      mostrano, con l'effetto sulla griglia della scadenza
 
 - [ ] Script di trasformazione dei dump `.pb` in
       `data/processed/observations.parquet`, con deduplica delle osservazioni
@@ -208,6 +232,37 @@ difende dal rischio sbagliato.
 
 ---
 
+## Fase 5-bis — Viaggio multi-tappa come CSP (Argomento 5)
+
+Eseguita durante l'attesa dei dati, perche' non dipende dalla raccolta: i suoi
+risultati sono deterministici e si calcolano sull'orario programmato.
+
+- [x] `src/csp/modello.py`: variabili, domini, i cinque vincoli, limite inferiore
+      derivato dai dati per tarare i budget
+- [x] `src/csp/risolutori.py`: greedy senza ritorno all'indietro, risolutore
+      completo con potatura sul consumo residuo, controesempio a tre tappe
+- [x] `scripts/csp_greedy.py` e `results/csp_greedy.csv` (364 righe)
+- [x] Sezione "Argomento 5" in `docs/documentazione.md`, con Tabelle 12 e 13
+- [x] 13 test, fra cui il controesempio e il suo controllo speculare
+
+**Risultato principale.** Su 244 istanze risolubili la strategia sequenziale ne
+dichiara infattibili **45, cioe' il 18,4%** (Roma 16,5%, Torino 20,3%): il viaggio
+multi-tappa e' un problema di soddisfacimento di vincoli anche nei fatti e non
+solo nella formulazione. La quota cresce in modo monotono con il numero di tappe
+su entrambe le citta' e cala allentando il tetto sui cambi, che identifica il
+budget globale come causa dell'accoppiamento.
+
+**Sottoprodotto che ha cambiato una decisione.** Il soddisfacimento dei vincoli
+costa meno di un millesimo di secondo per istanza: tutto il costo del modulo sta
+nel calcolare i domini. La codifica dichiarativa in ASP, prevista come passo
+successivo, non porterebbe alcun guadagno di prestazioni, quindi **le 13 ore
+residue di questo argomento sono state riassegnate alla Fase 3**.
+
+**Non eseguiti, dichiarati fra gli sviluppi:** codifica ASP dei vincoli,
+transizione di fase, budget del cammino stretto.
+
+---
+
 ## Fase 5 — Backtesting e risultati
 
 - [ ] `src/eval/backtest.py`: itinerario generato con SOLO l'informazione
@@ -224,14 +279,22 @@ difende dal rischio sbagliato.
 
 ## Fase 6 — Documentazione
 
-- [ ] `docs/documentazione.md`
-  - [ ] introduzione e problema
-  - [ ] base di conoscenza: rappresentazione, regole, complessita' con i numeri
-        misurati in Fase 1
-  - [ ] ricerca: stato, euristica e sua ammissibilita', risultati
-  - [ ] modello probabilistico: scelte, iperparametri e come sono stati scelti,
-        risultati con media e deviazione standard
-  - [ ] pianificatore robusto
-  - [ ] valutazione sperimentale con tutte le tabelle
-  - [ ] conclusioni, limiti e **risultati negativi**
-  - [ ] riferimenti
+Il documento segue il template obbligatorio del docente: frontespizio,
+introduzione, sommario, elenco degli argomenti, una sezione per argomento con
+esattamente quattro sottosezioni, conclusioni e riferimenti. Conversione in
+`.docx` con `scripts/prepara_riferimento.py` piu' pandoc, comando nel README.
+
+- [x] Frontespizio con segnaposto, introduzione, sommario, elenco argomenti
+- [x] Argomento 1 — Rappresentazione e ragionamento relazionale
+- [x] Argomento 2 — Ricerca di soluzioni
+- [x] Argomento 3 — Ragionamento e incertezza
+- [ ] Argomento 4 — Apprendimento supervisionato e con incertezza
+  - [x] Sommario, Strumenti utilizzati, Decisioni di Progetto (la raccolta)
+  - [ ] **Valutazione: dipende dalle Fasi 3 e 5.** E' l'unica sottosezione
+        incompleta dell'intero documento
+- [x] Argomento 5 — Soddisfacimento di vincoli
+- [x] Conclusioni, con limiti, risultati negativi e strade scartate con la ragione
+- [x] Riferimenti bibliografici, 17 voci citate per capitolo
+
+**Stato:** 44 pagine, 23.452 parole, 15 tabelle, 4 figure. L'unica cosa mancante
+e' la Valutazione dell'Argomento 4.

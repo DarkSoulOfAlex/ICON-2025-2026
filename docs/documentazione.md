@@ -50,7 +50,7 @@ dati aperti sono raccolti in continuo da un sistema installato per lo scopo.
 
 # Sommario
 
-Il sistema e' un pianificatore di viaggi che integra quattro moduli, ciascuno
+Il sistema e' un pianificatore di viaggi che integra cinque moduli, ciascuno
 fondato su un formalismo diverso e ciascuno responsabile di una parte del
 ragionamento che porta dalla domanda dell'utente all'itinerario proposto.
 
@@ -81,11 +81,18 @@ Il quarto modulo, in corso di realizzazione, e' l'**apprendimento delle
 distribuzioni di ritardo** dai dati raccolti sul campo, che sostituira' il modello
 provvisorio con cui il terzo modulo e' stato finora collaudato.
 
-I quattro moduli sono deliberatamente eterogenei, e la scelta non e' di comodo: il
+Il quinto modulo formula come **soddisfacimento di vincoli** il viaggio con piu'
+tappe obbligate e finestre temporali: le tratte sono le variabili, gli itinerari
+non dominati prodotti dal secondo modulo sono i domini, e due budget globali — sul
+numero totale di cambi e sui minuti totali a piedi — legano fra loro scelte che
+altrimenti sarebbero indipendenti.
+
+I cinque moduli sono deliberatamente eterogenei, e la scelta non e' di comodo: il
 problema si spezza lungo linee che corrispondono a formalismi diversi, perche'
 derivare una relazione da regole con eccezioni, cercare in uno spazio di stati,
-comporre distribuzioni di probabilita' e stimare quelle distribuzioni dai dati
-sono quattro compiti che nessun singolo formalismo affronta bene. Ogni modulo
+comporre distribuzioni di probabilita', stimare quelle distribuzioni dai dati e
+soddisfare vincoli che legano scelte gia' compiute sono compiti che nessun singolo
+formalismo affronta bene. Ogni modulo
 espone agli altri un'interfaccia stretta ed e' collaudato e misurato per conto
 proprio prima di essere composto; le quattro sezioni che seguono sono percio'
 leggibili anche separatamente.
@@ -130,6 +137,15 @@ saranno stimate dai dati raccolti sul campo, con una stima condizionata alla
 linea, alla fascia oraria, alla posizione lungo la corsa e al ritardo osservato a
 monte. E' l'argomento attualmente in corso di realizzazione: la raccolta dei dati
 e' completa e funzionante, la stima non e' ancora stata eseguita.
+
+**Argomento 5 — Soddisfacimento di vincoli (cap. 4).** Il viaggio con piu' tappe
+obbligate e' formulato come problema di vincoli: le variabili sono le tratte, i
+domini gli itinerari non dominati che le percorrono, e i vincoli la precedenza fra
+tappe consecutive, le finestre temporali a due estremi sulle tappe intermedie e
+due budget globali sul numero di cambi e sui minuti a piedi. La valutazione
+verifica, prima di ogni altra cosa, che il problema non sia risolubile tappa per
+tappa senza tornare indietro: e' la condizione perche' la formulazione a vincoli
+sia giustificata invece che decorativa.
 
 # Sezione Argomento 1 — Rappresentazione e ragionamento relazionale
 
@@ -1836,6 +1852,305 @@ progetto. Ogni risultato sara' riportato come media e deviazione standard su piu
 giornate di raccolta, in modo che la variabilita' fra giorni feriali e festivi e
 fra condizioni di traffico diverse sia visibile e non nascosta in un valore unico.
 
+# Sezione Argomento 5 — Soddisfacimento di vincoli
+
+## Sommario
+
+Il problema si formula come **soddisfacimento di vincoli** [1, cap. 4]. La
+particolarita' di questo caso e' che le variabili non sono grandezze elementari ma
+scelte fra itinerari gia' calcolati: il pianificatore descritto nell'argomento
+sulla ricerca produce, per ogni tratta, l'insieme delle soluzioni non dominate su
+orario di arrivo, cambi e minuti a piedi, e qui si decide **quale** di quelle
+soluzioni usare su ciascuna tratta di un viaggio che ne ha piu' d'una.
+
+La situazione modellata e' quella di chi deve toccare piu' luoghi nella stessa
+giornata: essere in stazione fra le 9:00 e le 9:15, poi in ufficio entro le 10:00.
+Ogni singola tratta e' un problema gia' risolto; cio' che non e' risolto e' la
+loro **compatibilita' reciproca**, ed e' li' che vive questo argomento.
+
+**Variabili, domini, vincoli.** Le variabili sono le tratte del viaggio, una per
+ciascuna. Il dominio di una tratta e' l'insieme degli itinerari non dominati che
+la percorrono, ciascuno con l'istante da cui e' eseguibile, l'orario di arrivo, il
+numero di cambi e i secondi di cammino. I vincoli sono cinque. La **precedenza**
+impone di non ripartire prima di essere arrivati e di aver trascorso alla tappa il
+tempo per cui ci si e' fermati. La **finestra** impone che l'arrivo a una tappa
+intermedia cada fra due estremi, e l'estremo inferiore non e' decorativo: se devo
+essere in stazione fra le 9:00 e le 9:15, arrivare alle 8:40 e' una violazione e
+non un vantaggio. Il **budget dei cambi** limita il numero totale di trasbordi
+dell'intera giornata, e il **budget del cammino** i minuti totali a piedi. La
+**scadenza** vincola l'arrivo finale.
+
+**Che cosa rende questo un problema di vincoli e non una ricerca sequenziale.** E'
+la domanda che decide se l'argomento abbia diritto di esistere, e va affrontata
+prima di ogni altra cosa.
+
+Con i soli vincoli di precedenza il problema **si risolverebbe da sinistra a
+destra**, scegliendo su ogni tratta l'itinerario che arriva prima e senza mai
+tornare indietro. La ragione e' la stessa dominanza che nell'argomento sulla
+ricerca permette di togliere l'istante dalla chiave di stato: arrivare prima, a
+parita' di tutto il resto, non puo' nuocere, perche' ogni prosecuzione disponibile
+a chi arriva tardi lo e' anche a chi arriva presto. Se il modello si fermasse li',
+chiamarlo soddisfacimento di vincoli sarebbe una millanteria.
+
+Cio' che rompe quella proprieta' sono i **due budget globali**. Non sono stati
+introdotti per accoppiare le variabili: sono i vincoli che un viaggiatore reale
+ha, e l'accoppiamento e' una loro conseguenza. Nessuno accetta dodici cambi in una
+mattina, e le aziende di trasporto pubblicano tempi minimi di trasbordo proprio
+perche' il cambio ha un costo che non e' solo di tempo. Il tetto sul cammino e'
+ancora piu' concreto, ed e' stringente per chi ha ridotta mobilita' — la stessa
+persona per cui la base di conoscenza del primo argomento deriva la relazione
+`accessibile`.
+
+Sotto un budget globale la dominanza cade, perche' un itinerario che arriva prima
+puo' **consumare cambi che serviranno piu' avanti**. Il caso seguente lo dimostra
+in modo verificabile a mano.
+
+> Viaggio in tre tappe, tetto globale di **quattro cambi**, sosta minima di cinque
+> minuti a ogni tappa intermedia.
+>
+> *Prima tappa*, con finestra 09:00–09:15: l'itinerario `X1` arriva alle 09:05 con
+> tre cambi, l'itinerario `X2` alle 09:12 con un cambio. Entrambi rispettano la
+> finestra.
+> *Seconda tappa*: `Y1` esige di essere pronti alle 09:10 e costa un cambio, `Y2`
+> alle 09:20 e ne costa due.
+> *Terza tappa*: un solo itinerario, che esige di essere pronti alle 09:55 e costa
+> un cambio.
+>
+> La strategia sequenziale sceglie `X1`, perche' arriva prima. Con la sosta di
+> cinque minuti puo' poi prendere `Y1`, che parte esattamente alle 09:10: ha speso
+> quattro cambi, e alla terza tappa ne servirebbe un quinto. **Dichiara l'istanza
+> infattibile.**
+>
+> Scegliendo invece `X2`, che arriva **sette minuti piu' tardi**, la sosta impone
+> di attendere fino alle 09:17 e quindi di prendere `Y2`. Il totale e'
+> 1 + 2 + 1 = quattro cambi esatti, e il viaggio si conclude. **La soluzione
+> esiste**, e per trovarla bisogna scegliere sulla prima tappa un itinerario
+> peggiore sul criterio locale.
+
+E' l'assenza di sottostruttura ottima, ed e' cio' che distingue un problema di
+soddisfacimento di vincoli da una successione di decisioni indipendenti. Il caso
+e' costruito, quindi dimostra che il fenomeno e' **possibile**; quanto sia
+frequente su istanze ricavate dalla rete vera e' la misura riportata nella
+valutazione, ed e' stata fatta prima di costruirci sopra qualunque altra cosa.
+
+## Strumenti utilizzati
+
+La formulazione e le nozioni di variabile, dominio, vincolo e propagazione sono
+quelle del testo del corso [1, cap. 4]. I domini provengono dalla ricerca
+multi-criterio a etichette gia' descritta [9]; la potatura del risolutore completo
+usa un limite inferiore sul consumo residuo, che e' la forma piu' semplice di
+propagazione all'indietro su un vincolo di somma.
+
+Non vi sono dipendenze aggiuntive: i due risolutori sono scritti in Python puro
+sopra le strutture gia' esistenti, e l'esperimento riusa il grafo tempo-espanso e
+il pianificatore degli argomenti precedenti.
+
+E' originale di questo progetto, e per questo esposto nel sommario, il
+controesempio a tre tappe che dimostra l'assenza di sottostruttura ottima sotto un
+budget globale.
+
+## Decisioni di Progetto
+
+**I domini si costruiscono da una griglia di istanti di disponibilita'.** Il
+pianificatore viene interrogato su ogni tratta a partire da tre istanti, sfalsati
+di dieci minuti, e l'unione delle frontiere risultanti forma il dominio. *Perche'
+non un solo istante:* il dominio sarebbe povero e la scelta quasi obbligata, cioe'
+un problema di vincoli senza vincoli da soddisfare. *Perche' non piu' di tre:*
+ogni istante e' una ricerca di Pareto completa, e il costo dell'esperimento cresce
+linearmente. *La conseguenza sul modello, da dichiarare:* ogni candidato conserva
+l'istante da cui e' stato calcolato, e il vincolo di precedenza si scrive su
+quello. Un itinerario calcolato per chi e' pronto alle 09:20 e' eseguibile da
+chiunque sia pronto entro le 09:20, quindi la formulazione e' corretta ed e'
+leggermente **conservativa**: un viaggiatore pronto alle 09:12 potrebbe in teoria
+prendere qualcosa che la griglia non offre. Il vantaggio e' che i domini restano
+**statici**, come un problema di vincoli richiede; ricalcolarli in funzione della
+scelta precedente li renderebbe dinamici e trasformerebbe il problema in
+un'altra cosa.
+
+**I budget sono derivati dai dati, non scelti a occhio.** Per ogni istanza si
+calcola il minimo di cambi ottenibile guardando ogni tratta separatamente, e il
+tetto e' quel minimo piu' un margine che varia da zero a tre. *Perche' cosi':* un
+tetto fisso confronterebbe istanze non confrontabili, perche' un viaggio fra
+periferie richiede intrinsecamente piu' cambi di uno in centro, e un tetto sotto
+il minimo renderebbe l'istanza infattibile per aritmetica invece che per
+interazione fra le tappe — misurando la nostra scelta della soglia e non il
+fenomeno. *Perche' il minimo per tratta e' un limite inferiore valido:* minimizza
+ogni tratta ignorando precedenza e finestre, quindi non puo' superare il consumo
+di una soluzione vera, ed e' anche il limite usato per potare la ricerca completa.
+
+**Il budget del cammino e' lasciato largo di proposito.** Il margine sul cammino
+e' di trenta minuti, abbastanza da non stringere quasi mai. *Perche':*
+l'esperimento isola l'effetto del budget sui **cambi**, e lasciar stringere
+entrambi mescolerebbe due cause in un solo numero. Il vincolo resta implementato e
+collaudato, e stringerlo e' l'esperimento naturale successivo.
+
+**Il confronto e' con la strategia sequenziale piu' forte, non con un fantoccio.**
+Il risolutore greedy scarta i candidati che sforerebbero il budget **mentre**
+procede, invece di accorgersene alla fine. *Perche':* un greedy che si accorge
+dello sforamento solo alla fine fallirebbe piu' spesso, e la misura direbbe piu'
+sulla debolezza del confronto che sulla natura del problema. La sola cosa che il
+greedy non fa e' tornare indietro, che e' esattamente la proprieta' in esame.
+
+**Piu' grafi brevi invece di uno lungo.** Un viaggio di quattro tratte casuali
+attraversa la citta' per cinque o sei ore, ma il costo di una ricerca cresce con
+l'orizzonte del grafo: misurato su Roma, la stessa ricerca costa **2,87 secondi**
+su un orizzonte di 150 minuti e **38,63 secondi** su uno di 420, perche' il numero
+di stati raggiungibili cresce con la finestra. Si costruisce percio' una
+successione di sei grafi da 150 minuti sfalsati di un'ora, e ogni tratta viene
+cercata su quello che copre il suo istante di disponibilita'. *La conseguenza:*
+l'orizzonte effettivo di ciascuna ricerca resta fra i 90 e i 150 minuti,
+confrontabile con i 120 minuti dell'argomento sulla ricerca, e vale la stessa
+limitazione gia' dichiarata li': si trova l'ottimo dentro la finestra, e una
+tratta che richiedesse un'attesa piu' lunga non verrebbe trovata affatto.
+
+**Le catene che si interrompono si conservano per il prefisso.** Se la terza
+tratta di una catena non ha alcun itinerario nella finestra, le prime due restano
+utilizzabili come istanza a due tappe. *Perche' non si scarta tutto:* butterebbe
+via istanze valide e farebbe sembrare il fenomeno piu' raro di quanto sia. Una
+catena viene scartata solo sotto le due tratte, sotto le quali non esiste viaggio
+multi-tappa.
+
+## Valutazione
+
+La misura riportata qui e' stata fatta **prima** di costruire qualunque altra cosa
+sopra la formulazione, perche' e' quella che poteva invalidarla. La domanda e'
+semplice: su istanze ricavate dalla rete vera, quanto spesso la strategia
+sequenziale dichiara infattibile un viaggio che una soluzione ce l'ha? Se la
+risposta fosse "quasi mai", il viaggio multi-tappa non sarebbe un problema di
+soddisfacimento di vincoli e l'argomento andrebbe chiuso come risultato negativo.
+
+**Come sono costruite le istanze.** Per ciascuna citta' si estraggono venticinque
+successioni di cinque fermate, con un seme dichiarato, fra le fermate
+effettivamente servite; da ogni successione si ricavano i domini tratta per
+tratta, interrogando il pianificatore da tre istanti di disponibilita' sfalsati di
+dieci minuti. Da ogni catena si ritagliano poi i viaggi a due, tre e quattro
+tappe, e per ciascuno si fanno variare i tetti sui cambi da zero a tre sopra il
+minimo ottenibile. Le catene utilizzabili sono state **20 su 25 a Roma** e **17 su
+25 a Torino**: le altre si interrompono sotto le due tratte perche' una tratta non
+ha alcun itinerario nella finestra, ed e' la stessa limitazione gia' misurata
+nell'argomento sulla ricerca, dove la finestra non bastava sul 14-22% delle
+coppie. Delle catene utilizzabili, 11 a Roma e 13 a Torino arrivano alle quattro
+tratte complete.
+
+I domini contengono **15,7 ± 5,6 itinerari per tratta**: sono abbastanza ricchi
+perche' la scelta sia una scelta vera e non un'assegnazione obbligata, il che e'
+il primo requisito perche' il problema sia interessante.
+
+**Il risultato principale.** Su **244 istanze risolubili, la strategia sequenziale
+ne dichiara infattibili 45, cioe' il 18,4%**: 16,5% a Roma e 20,3% a Torino. Quasi
+una istanza su cinque richiede di tornare indietro su una scelta gia' fatta. Il
+fenomeno costruito a mano nel sommario non e' dunque una curiosita' di laboratorio:
+e' frequente.
+
+Tabella 12 — Effetto del margine sul tetto dei cambi. Il margine e' lo scarto fra
+il tetto imposto e il minimo ottenibile guardando ogni tratta separatamente;
+margine zero significa che ogni tratta deve usare il proprio itinerario con meno
+cambi. Aggregata sui viaggi a due, tre e quattro tappe.
+
+| Citta' | Margine | Istanze | Risolubili | Il greedy risolve | Il greedy sbaglia |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Roma | 0 | 47 | 15 | 11 | 4 (26,7%) |
+| Roma | 1 | 47 | 26 | 22 | 4 (15,4%) |
+| Roma | 2 | 47 | 37 | 30 | 7 (18,9%) |
+| Roma | 3 | 47 | 43 | 38 | 5 (11,6%) |
+| Torino | 0 | 44 | 15 | 9 | 6 (40,0%) |
+| Torino | 1 | 44 | 29 | 19 | 10 (34,5%) |
+| Torino | 2 | 44 | 37 | 31 | 6 (16,2%) |
+| Torino | 3 | 44 | 42 | 39 | 3 (7,1%) |
+
+La tabella va letta su due colonne insieme. La colonna **risolubili** cresce in
+modo netto con il margine — da 15 a 43 su Roma, da 15 a 42 su Torino — e non
+sorprende: allentando il tetto, istanze prima impossibili diventano possibili. A
+margine zero **meno di un terzo** delle istanze ha una soluzione, il che dice che
+imporre a ogni tratta il proprio itinerario piu' economico in cambi e' un vincolo
+molto severo una volta che le tratte devono anche incastrarsi fra loro.
+
+La colonna **il greedy sbaglia** e' quella che risponde alla domanda, e su Torino
+scende in modo monotono: 40,0%, 34,5%, 16,2%, 7,1%. Piu' il budget e' stretto,
+piu' spesso la strategia sequenziale si acceca da sola scegliendo l'arrivo piu'
+precoce. Roma segue lo stesso andamento con un'oscillazione fra il margine 1 e il
+2, 15,4% contro 18,9%, che su numeri di questa taglia — quattro e sette casi — non
+e' distinguibile dal rumore campionario. Il verso pero' e' inequivocabile agli
+estremi, 26,7% contro 11,6%. **E' la conferma sperimentale che a far fallire il
+greedy sia il budget globale**, perche' allentando quello e lasciando tutto il
+resto invariato il fallimento si dirada.
+
+Va notato che il fallimento **non scompare** nemmeno a margine tre, dove resta
+all'11,6% e al 7,1%. Il tetto continua a stringere in qualche istanza anche
+quando e' generoso, il che e' coerente con il fatto che il minimo per tratta e' un
+limite inferiore non raggiungibile: nulla garantisce che esista un'assegnazione
+che lo realizzi su tutte le tratte contemporaneamente.
+
+Tabella 13 — Effetto del numero di tappe, aggregata sui quattro margini.
+
+| Citta' | Tappe | Istanze | Risolubili | Il greedy risolve | Il greedy sbaglia |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Roma | 2 | 80 | 68 | 60 | 8 (11,8%) |
+| Roma | 3 | 64 | 41 | 33 | 8 (19,5%) |
+| Roma | 4 | 44 | 12 | 8 | 4 (33,3%) |
+| Torino | 2 | 68 | 58 | 48 | 10 (17,2%) |
+| Torino | 3 | 56 | 35 | 28 | 7 (20,0%) |
+| Torino | 4 | 52 | 30 | 22 | 8 (26,7%) |
+
+Questa e' la lettura piu' pulita dell'esperimento, perche' la crescita e'
+**monotona su entrambe le citta' senza eccezioni**: 11,8%, 19,5%, 33,3% a Roma e
+17,2%, 20,0%, 26,7% a Torino. Ogni tappa aggiunta rende piu' probabile che una
+scelta locale ottima precluda il resto del viaggio, ed e' esattamente cio' che ci
+si attende quando le variabili sono accoppiate da un vincolo di somma: piu' sono
+le variabili che condividono un budget, piu' modi ci sono di spenderlo male. Su un
+viaggio a quattro tappe a Roma la strategia sequenziale sbaglia in **un caso su
+tre**.
+
+La colonna **risolubili** cala al crescere delle tappe — 68, 41, 12 a Roma — per
+due ragioni distinte che vale la pena separare: le catene lunghe sono meno
+numerose, perche' alcune si interrompono prima; e a parita' di margine un viaggio
+con piu' tappe ha piu' vincoli da soddisfare contemporaneamente. Il calo e' piu'
+marcato a Roma, dove restano dodici istanze risolubili su quarantaquattro a
+quattro tappe, e su numeri cosi' piccoli il 33,3% va letto per quello che e':
+quattro casi su dodici, un'indicazione forte ma non una stima precisa.
+
+**Il costo della risoluzione e' trascurabile, e la conseguenza non e' ovvia.** Il
+risolutore completo esplora in media 209 assegnazioni parziali, con un massimo di
+3.115, e impiega **0,07 ms in media e 1,1 ms nel caso peggiore**; a quattro tappe
+la media sale a 410 nodi e 0,13 ms. Il confronto con l'argomento sulla base di
+conoscenza e' istruttivo: li' il costo era interamente di istanziazione e non di
+ricerca, e qui accade qualcosa di analogo ma spostato di un livello. **Tutto il
+costo di questo modulo sta nel costruire i domini**, cioe' nelle ricerche di
+Pareto che li producono — nell'ordine dei secondi ciascuna — mentre il
+soddisfacimento dei vincoli su quei domini e' gratuito.
+
+Ne discende una conseguenza pratica che va dichiarata perche' contraddice
+un'attesa iniziale. Riscrivere il risolutore come programma a vincoli in Answer
+Set Programming, che era il passo successivo previsto, **non porterebbe alcun
+guadagno di prestazioni**, dal momento che la risoluzione costa gia' meno di un
+millesimo di secondo. Porterebbe altro, e sarebbe comunque utile: la possibilita'
+di aggiungere un vincolo senza riscrivere codice, e la dimostrazione che lo stesso
+strumento usato in modo puramente deduttivo nel primo argomento sa anche cercare.
+Ma la giustificazione sarebbe di espressivita', non di velocita', e presentarla
+altrimenti sarebbe scorretto.
+
+**Che cosa manca a questo argomento.** Sono state eseguite la formulazione, il
+controesempio e la misura che la giustifica; restano fuori tre cose, dichiarate
+qui e riprese fra gli sviluppi possibili. La **codifica in Answer Set
+Programming** dei vincoli, con il confronto fra il costo di istanziazione e quello
+di ricerca sullo stesso strumento del primo argomento. La **transizione di fase**,
+cioe' la mappa della soddisfacibilita' e del costo al variare congiunto
+dell'ampiezza delle finestre e dei due budget, di cui la colonna "risolubili" delle
+tabelle qui sopra e' soltanto una sezione. E il **budget del cammino**, che in
+questo esperimento e' stato lasciato largo di proposito per isolare l'effetto dei
+cambi, e che stringendolo produrrebbe un secondo accoppiamento indipendente dal
+primo — quello che interessa piu' da vicino il passeggero a ridotta mobilita' per
+cui la base di conoscenza deriva la relazione di accessibilita'.
+
+Questo argomento non ha una figura. Le tabelle riportano due sezioni di una
+superficie a due parametri, e disegnarla per intero e' esattamente
+l'esperimento sulla transizione di fase che non e' stato eseguito: una figura
+costruita sui soli dati disponibili mostrerebbe due linee, non la superficie, e
+direbbe meno delle tabelle. Dati grezzi in `results/csp_greedy.csv`, 364 righe.
+
+Nessun risultato di questo argomento dipende da un modello dei ritardi: sono tutti
+calcolati sull'orario programmato pubblicato dalle due aziende.
+
 # Conclusioni
 
 Il sistema realizzato deriva da dati aperti una relazione che quei dati non
@@ -1885,6 +2200,19 @@ alla scadenza, e in un problema in cui la scadenza e' il vincolo si difende dal
 rischio sbagliato. Questi numeri sono pero' calcolati su distribuzioni di ritardo
 sintetiche, e qualificano il metodo, non il trasporto pubblico di Roma o di
 Torino.
+
+Il viaggio con piu' tappe obbligate si e' rivelato un problema di soddisfacimento
+di vincoli anche nei fatti, e non solo nella formulazione. La verifica era la
+condizione perche' l'argomento avesse diritto di esistere ed e' stata fatta per
+prima: su 244 istanze risolubili ricavate dalla rete vera, la strategia
+sequenziale che sceglie a ogni tappa l'arrivo piu' precoce senza mai tornare
+indietro ne dichiara infattibili **45, cioe' il 18,4%**. La quota cresce in modo
+monotono su entrambe le citta' con il numero di tappe — dall'11,8% al 33,3% a
+Roma, dal 17,2% al 26,7% a Torino — e cala allentando il tetto sui cambi, che e'
+la conferma sperimentale di quale vincolo produca l'accoppiamento. Un
+sottoprodotto inatteso della misura riguarda il costo: il soddisfacimento dei
+vincoli e' gratuito, meno di un millesimo di secondo per istanza, e tutto il costo
+del modulo sta nel calcolare i domini.
 
 ## Problematiche non affrontate, e possibili estensioni
 
@@ -1947,12 +2275,25 @@ eseguire inferenza generale. Una rete bayesiana permetterebbe di aggiungere
 variabili esplicative come il meteo, il giorno della settimana o lo stato del
 traffico, e di ragionare anche in senso diagnostico, per esempio inferendo dalla
 propagazione osservata dei ritardi quale tratto della rete sia congestionato. Il
-**soddisfacimento di vincoli** non compare come formalismo autonomo: i vincoli del
-progetto sono vincoli di integrita' che rifiutano modelli incoerenti, non variabili
-con domini su cui cercare un'assegnazione. Un'estensione naturale sarebbe la
-pianificazione di un viaggio con piu' tappe obbligate e finestre temporali su
-ciascuna, che e' un problema di soddisfacimento di vincoli a pieno titolo e che il
-formalismo attuale non sa esprimere.
+**soddisfacimento di vincoli** e' invece trattato, ma solo in parte: la
+formulazione e la misura che la giustifica sono state eseguite, la codifica
+dichiarativa e l'esplorazione dello spazio dei parametri no, come dettagliato piu'
+avanti.
+
+**Che cosa manca al viaggio multi-tappa.** Dell'argomento sul soddisfacimento di
+vincoli sono state eseguite la formulazione, il controesempio che dimostra
+l'assenza di sottostruttura ottima e la misura che ne stabilisce la frequenza.
+Restano fuori tre cose. La **codifica dei vincoli in Answer Set Programming**, che
+non porterebbe guadagno di prestazioni — la risoluzione costa gia' meno di un
+millesimo di secondo — ma permetterebbe di aggiungere un vincolo senza riscrivere
+codice, e mostrerebbe lo stesso strumento usato in modo deduttivo nel primo
+argomento impiegato per cercare. La **transizione di fase**, cioe' la mappa della
+soddisfacibilita' e del costo al variare congiunto dell'ampiezza delle finestre e
+dei due budget, di cui le tabelle attuali sono due sezioni. E il **budget del
+cammino**, lasciato largo di proposito per isolare l'effetto dei cambi: stringerlo
+produrrebbe un accoppiamento indipendente dal primo, ed e' quello che riguarda piu'
+da vicino il passeggero a ridotta mobilita' per cui la base di conoscenza deriva
+la relazione di accessibilita'.
 
 **I limiti che vengono dai dati.** Nessuna delle due aziende pubblica
 `transfers.txt`, quindi il primo livello della gerarchia dei tempi minimi di

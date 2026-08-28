@@ -72,6 +72,11 @@ STILI_MANCANTI = """
     <w:name w:val="Image Caption"/><w:basedOn w:val="Normal"/><w:qFormat/>
     <w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="240"/></w:pPr>
     <w:rPr><w:i/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="BlockText">
+    <w:name w:val="Block Text"/><w:basedOn w:val="Normal"/><w:qFormat/>
+    <w:pPr><w:ind w:left="567" w:right="567"/><w:spacing w:before="120" w:after="120"/>
+      <w:pBdr><w:left w:val="single" w:sz="12" w:space="12" w:color="BFBFBF"/></w:pBdr></w:pPr>
+  </w:style>
   <w:style w:type="character" w:styleId="VerbatimChar">
     <w:name w:val="Verbatim Char"/><w:basedOn w:val="DefaultParagraphFont"/><w:qFormat/>
     <w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>

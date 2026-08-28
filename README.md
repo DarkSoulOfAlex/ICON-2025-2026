@@ -367,3 +367,51 @@ Volume misurato: un giro completo sulle due citta' pesa **910 KB**, cioe' circa
 **1,3 GB al giorno** grezzi, piu' ~48 MB per ogni revisione dell'orario di Roma.
 Su trenta giorni sono nell'ordine dei 40 GB. **Fatene una copia di sicurezza su
 un secondo supporto**: se si perde, si perde il progetto.
+
+---
+
+## 6. Produrre il documento in formato `.docx`
+
+Il documento si scrive in Markdown (`docs/documentazione.md`) e si consegna in
+`.docx` conforme al template del docente. La conversione richiede
+[pandoc](https://pandoc.org/) e due comandi:
+
+```bash
+python scripts/prepara_riferimento.py
+pandoc docs/documentazione.md \
+    --reference-doc=docs/riferimento_pandoc.docx \
+    --resource-path=docs \
+    -o docs/documentazione.docx
+```
+
+Il primo comando serve e non e' saltabile. `pandoc --reference-doc` prende dal
+documento indicato **gli stili, non i contenuti**, ma il template del docente non
+definisce tutti gli stili che pandoc **riferisce**: manca fra gli altri `Table`,
+e senza quello **le tabelle escono prive di qualunque filetto e senza
+intestazione distinguibile**; mancano `CaptionedFigure` e `ImageCaption`, senza i
+quali le didascalie delle figure diventano testo di corpo indistinguibile.
+`prepara_riferimento.py` genera `docs/riferimento_pandoc.docx` aggiungendo le
+definizioni mancanti al template, che resta intatto.
+
+Due conseguenze per chi scrive il documento:
+
+- Il template definisce **solo `Heading1` e `Heading2`**. Il Markdown puo' quindi
+  usare `#` e `##` e nient'altro: un `###` ricadrebbe su `Normal` e sarebbe
+  indistinguibile dal testo. Il frontespizio va scritto nel Markdown, perche' i
+  contenuti del template non vengono trasferiti.
+- `--resource-path=docs` serve perche' le figure sono referenziate come
+  `../results/*.png`, cioe' relativamente a `docs/`.
+
+Per verificare che la conversione non abbia lasciato stili pendenti:
+
+```bash
+python - <<'EOF'
+import re, zipfile
+with zipfile.ZipFile("docs/documentazione.docx") as z:
+    doc = z.read("word/document.xml").decode("utf-8")
+    sty = z.read("word/styles.xml").decode("utf-8")
+usati = set(re.findall(r'w:(?:p|tbl|r)Style w:val="([^"]+)"', doc))
+definiti = set(re.findall(r'w:styleId="([^"]+)"', sty))
+print("stili non definiti:", sorted(usati - definiti) or "nessuno")
+EOF
+```

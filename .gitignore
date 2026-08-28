@@ -43,3 +43,7 @@ desktop.ini
 # NOTA: results/ NON e' ignorato di proposito. I CSV e i grafici degli esperimenti
 # sono il deliverable valutato del progetto, non artefatti rigenerabili a piacere:
 # devono essere versionati insieme al codice che li ha prodotti.
+
+# Generati dal template del docente da scripts/prepara_riferimento.py
+docs/riferimento_pandoc.docx
+docs/documentazione.docx

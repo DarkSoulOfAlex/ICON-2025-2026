@@ -1689,8 +1689,26 @@ citta', `trip_updates` e `vehicle_positions`, conserva i dump grezzi, archivia
 l'orario statico ogni volta che cambia e consolida ogni notte le osservazioni
 della giornata in formato colonnare, calcolando lo scostamento fra orario
 osservato e orario programmato. Alla data di scrittura risultano **quattro
-giornate consolidate per 74 MB di dati colonnari**, e sull'ultima giornata piena
-la copertura reale e' del **100% su entrambe le citta'**.
+giornate consolidate per 74 MB di dati colonnari**, e la copertura reale misurata
+sul 27 agosto e' del **100% su entrambe le citta'**.
+
+La copertura non e' pero' l'unica grandezza da guardare, e il registro delle
+interruzioni tiene traccia di cio' che la copertura non vede. Lo stesso 27 agosto
+vi compare una finestra di **32 minuti su Torino** con causa
+`errori_di_rete_prolungati`, mentre Roma raccoglieva regolarmente. E' la prima
+interruzione di quel tipo: tutte le precedenti avevano causa
+`processo_non_attivo`, cioe' il collector spento. La distinzione fra le due cause
+non e' contabile ma **metodologica**, e va portata avanti fino alla stima. Quando
+il collector e' spento non sappiamo che cosa sia accaduto sulla rete in quella
+finestra: l'informazione esisteva e noi non l'abbiamo raccolta, quindi quei
+minuti vanno esclusi dal backtesting, perche' altrimenti una coincidenza mai
+osservata verrebbe scambiata per una coincidenza persa. Quando invece e' il feed
+a non rispondere, l'informazione **non era disponibile nemmeno a un passeggero
+reale** in quel momento: e' una condizione del mondo, non una lacuna della
+raccolta, e un pianificatore che in quel momento avesse dovuto decidere si
+sarebbe trovato senza dati esattamente come noi. Trattare i due casi allo stesso
+modo scarterebbe proprio le finestre in cui il problema e' piu' difficile e in
+cui un metodo robusto dovrebbe distinguersi.
 
 Cio' che manca e' la stima vera e propria: la scelta della famiglia di
 distribuzioni, il raggruppamento delle condizioni con numerosita' campionaria
@@ -1768,15 +1786,37 @@ che coincida con quello statico, e una divergenza viene contata e segnalata,
 perche' significherebbe che la corsa in circolazione non e' quella che l'orario
 descrive.
 
-**L'orario statico e' archiviato a ogni cambiamento, confrontando l'impronta.** Il
-ritardo e' uno scostamento da un orario programmato, e quell'orario cambia:
-confrontare un'osservazione di oggi con l'orario di due settimane fa produrrebbe
-ritardi inventati. Ogni giorno si confronta l'impronta `.md5` pubblicata
-dall'azienda e, se e' cambiata, si scarica e conserva una nuova revisione; un
-indice associa a ogni data la revisione valida quel giorno. *Perche' l'impronta e
-non il download:* l'archivio di Roma pesa 48,5 MB per revisione e cambia quasi
-ogni giorno, quindi scaricarlo per confrontarlo costerebbe la banda di un
-download completo per scoprire che nulla e' cambiato.
+**L'orario statico e' archiviato a ogni cambiamento, ed e' un requisito e non una
+precauzione.** Il ritardo e' uno scostamento da un orario programmato, e
+quell'orario cambia: confrontare un'osservazione di oggi con l'orario di due
+settimane fa produrrebbe ritardi inventati. Ogni giorno si verifica se l'archivio
+sia cambiato e, in caso affermativo, se ne conserva una nuova revisione; un
+indice associa a ogni data la revisione valida quel giorno.
+
+*Quanto spesso cambia, misurato.* Sui quattro giorni finora mappati, dal 25 al 28
+agosto, **Roma ha prodotto quattro revisioni distinte su quattro giorni** e
+**Torino due su quattro**: l'archivio di Torino e' cambiato una volta, fra il 25 e
+il 26 agosto, passando da **19.905.201 a 20.264.224 byte**. La lettura corretta
+non e' dunque che Roma aggiorna l'orario e Torino no, ma che **entrambe lo
+aggiornano, con frequenza diversa**. E' la differenza che trasforma
+l'archiviazione giornaliera da precauzione a requisito: se avessimo scaricato il
+GTFS una volta sola, per esempio il 27 agosto, i dump del 25 sarebbero oggi
+associati a un orario sbagliato **per entrambe le citta'**, e ogni ritardo
+calcolato su quel giorno sarebbe uno scostamento da un orario che quel giorno non
+era in vigore. L'errore non si sarebbe manifestato come un'eccezione ma come
+ritardi plausibili e falsi.
+
+*Perche' il confronto dell'impronta e non il download.* L'archivio di Roma pesa
+48,5 MB per revisione, quindi scaricarlo ogni giorno per scoprire che nulla e'
+cambiato costerebbe quella banda per nulla; il file `.md5` che l'azienda pubblica
+accanto all'archivio ne costa 59 byte. *Alternativa scartata:* fidarsi
+dell'intestazione HTTP `Last-Modified`, che molti server aggiornano a ogni
+rigenerazione anche quando il contenuto e' identico e che quindi non
+distinguerebbe una revisione vera da una ripubblicazione. *Il caso di Torino:*
+GTT non pubblica alcun `.md5`, quindi per quella citta' il meccanismo ripiega
+sullo scaricamento dell'archivio e sul confronto della sua impronta — piu' costoso
+ma corretto, e sostenibile perche' l'archivio di Torino pesa venti megabyte
+scarsi.
 
 **Si raccolgono entrambi i feed, non solo `trip_updates`.** *Perche':* i
 `trip_updates` portano le previsioni di orario, che sono cio' che serve al

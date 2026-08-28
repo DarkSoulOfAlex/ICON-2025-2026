@@ -542,6 +542,16 @@ quindi non distinguerebbe una revisione vera da una ripubblicazione. La scelta d
 MD5 non e' crittografica ma di interoperabilita': e' l'impronta che l'agenzia
 pubblica, e usarne un'altra renderebbe impossibile il confronto senza scaricare.
 
+**Aggiornamento: la frequenza di cambiamento e' stata misurata.** Sui quattro
+giorni mappati dal 25 al 28 agosto, **Roma ha prodotto quattro revisioni distinte
+su quattro giorni** e **Torino due su quattro**, essendo cambiato una volta fra il
+25 e il 26 agosto, da **19.905.201 a 20.264.224 byte**. La formulazione corretta
+non e' quindi che Roma aggiorna l'orario e Torino no, ma che **entrambe lo
+aggiornano con frequenza diversa**, ed e' una versione piu' forte della
+motivazione: se l'archivio fosse stato scaricato una volta sola, per esempio il 27
+agosto, i dump del 25 sarebbero associati all'orario sbagliato **per entrambe le
+citta'**, non per la sola Roma.
+
 **Come si potrebbe verificare.** Il test
 `test_se_il_md5_e_invariato_l_archivio_non_viene_scaricato` controlla che nei
 giorni senza modifiche l'indirizzo dell'archivio non venga mai interrogato. Sul
@@ -601,6 +611,23 @@ riusciti.
 
 La soglia di 300 s (cinque tick) esiste per non trasformare ogni errore isolato
 in una riga: un tick perso e recuperato subito e' rumore, non un buco nei dati.
+
+**Aggiornamento: la distinzione si e' manifestata sul campo.** Il 27 agosto e'
+comparsa la prima interruzione con causa `errori_di_rete_prolungati`: **32 minuti
+su Torino**, mentre Roma raccoglieva regolarmente. Tutte le precedenti avevano
+causa `processo_non_attivo`. La contemporaneita' e' essa stessa la prova che la
+causa e' corretta: se fosse stato il collector a fermarsi, si sarebbero fermate
+entrambe le citta'.
+
+La conseguenza per la Fase 3 va fissata ora, perche' a posteriori il dato non e'
+piu' ricostruibile. Con `processo_non_attivo` l'informazione **esisteva** e non
+l'abbiamo raccolta, quindi quei minuti vanno esclusi dal backtesting: altrimenti
+una coincidenza mai osservata verrebbe scambiata per una coincidenza persa. Con
+`errori_di_rete_prolungati` l'informazione **non era disponibile nemmeno a un
+passeggero reale**: e' una condizione del mondo e non una lacuna della raccolta, e
+un pianificatore che in quel momento avesse dovuto decidere si sarebbe trovato
+senza dati esattamente come noi. Escludere anche quelle finestre toglierebbe dal
+campione proprio i momenti in cui il problema e' piu' difficile.
 
 **Come si potrebbe verificare.** Terminare il collector, attendere dieci minuti e
 riavviarlo: deve comparire una riga con causa `processo_non_attivo` e durata pari

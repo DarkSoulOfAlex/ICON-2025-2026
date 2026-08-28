@@ -323,9 +323,11 @@ e' un concetto in ora locale.
 
 ### `index.json` — quale orario vale in quale giorno
 
-L'orario statico di Roma cambia quasi ogni giorno e i `trip_id` non sono stabili
-nel tempo: un dump real-time e' interpretabile solo insieme alla versione
-dell'orario in vigore **quel** giorno. `index.json` tiene questa mappa:
+**Entrambe** le citta' cambiano l'orario statico, con frequenza diversa: sui
+quattro giorni mappati dal 25 al 28 agosto, Roma ha prodotto quattro revisioni
+distinte e Torino due. I `trip_id` non sono stabili nel tempo, quindi un dump
+real-time e' interpretabile solo insieme alla versione dell'orario in vigore
+**quel** giorno. `index.json` tiene questa mappa:
 
 ```json
 {

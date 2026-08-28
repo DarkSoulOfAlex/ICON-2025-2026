@@ -1899,16 +1899,48 @@ verificare. La raccolta e' completa e funzionante, con quattro giornate gia'
 consolidate per 74 MB, ma la stima delle distribuzioni e il conseguente
 backtesting non sono stati eseguiti.
 
-**Le lacune di copertura del programma.** Tre argomenti del corso non sono
-rappresentati nel progetto, e vale la pena dire per ciascuno che cosa avrebbe
-aggiunto. I **Knowledge Graph e le ontologie** non compaiono: la conoscenza del
-dominio e' rappresentata da un programma logico con predicati fissati a priori e
-non da una struttura a grafo con una gerarchia di classi e proprieta'
-interrogabile. Un'estensione naturale sarebbe descrivere la rete di trasporto come
-ontologia, con una tassonomia dei tipi di fermata e di servizio, e derivare per
-sussunzione proprieta' oggi codificate a mano — per esempio che una banchina di
-metropolitana eredita l'accessibilita' della stazione, che nel progetto attuale e'
-una regola scritta apposta. Le **reti bayesiane** non compaiono: la dipendenza fra
+**Una strada considerata e scartata, con la ragione: i Knowledge Graph e le
+ontologie.** L'ipotesi e' stata valutata concretamente — pubblicare la base di
+conoscenza come grafo RDF con un vocabolario OWL minimo per fermate, stazioni,
+linee, trasbordi e accessibilita', e interrogarla in SPARQL sfruttando la
+gerarchia delle classi e un reasoner. E' stata scartata, e la ragione non e' di
+tempo.
+
+La ragione debole e' che non siamo riusciti a formulare una domanda a cui il
+grafo rispondesse meglio di quanto gia' facciamo. La gerarchia di classi con
+sussunzione, i cammini di proprieta' per la chiusura transitiva dei trasbordi, le
+proprieta' simmetriche e inverse: sono tutte cose che le regole del primo
+argomento derivano gia', e in piu' con il tempo minimo difettibile lungo la
+catena, che un cammino di proprieta' non sa calcolare. Un'ontologia costruita
+sopra fatti che deriviamo gia', interrogata con query di complessita' logica
+inferiore a quella delle regole che abbiamo scritto, sarebbe una piccola ontologia
+usata come base di dati.
+
+La ragione forte e' che **sarebbe stato un regresso di espressivita'**. OWL e' un
+formalismo **monotono**: aggiungere assiomi non puo' mai togliere conclusioni. Ma
+le due proprieta' migliori della nostra base di conoscenza sono esattamente
+quelle che la monotonia esclude. L'eredita' difettibile del tempo minimo di
+trasbordo, in cui una dichiarazione dell'azienda sovrascrive il default di
+stazione che a sua volta sovrascrive il default di cammino, non e' esprimibile in
+OWL, perche' richiede che una regola piu' specifica **disattivi** una piu'
+generale. La non monotonia dell'accessibilita' lo e' ancora meno: nel nostro
+programma l'aggiunta del fatto che un ascensore e' fuori servizio **rimuove**
+quattro conclusioni gia' derivate, e nessun formalismo monotono puo' comportarsi
+cosi'. Tradurre la base di conoscenza in un'ontologia avrebbe significato buttare
+via cio' che la rende difendibile come base di conoscenza e conservarne la parte
+che qualunque base di dati saprebbe replicare: avremmo aggiunto un capitolo che
+indebolisce l'argomento del capitolo precedente.
+
+Va detto per completezza che restava possibile una versione minima, cioe'
+esportare il grafo come artefatto di **interoperabilita'**, dichiarando
+esplicitamente che non e' un contributo di rappresentazione. Anche quella e' stata
+scartata, perche' spende ore per un'etichetta e perche' chi legge "Knowledge
+Graph" e trova una serializzazione ha piu' motivi di penalizzare che di premiare.
+La scelta di Answer Set Programming e' stata dunque compiuta sapendo che cosa
+comportava, e questo paragrafo ne e' il conto.
+
+**Le altre lacune di copertura del programma.** Le **reti bayesiane** non
+compaiono ancora: la dipendenza fra
 il ritardo alla salita e quello alla discesa e' rappresentata da un
 condizionamento diretto fra due variabili, non da una struttura grafica su cui
 eseguire inferenza generale. Una rete bayesiana permetterebbe di aggiungere

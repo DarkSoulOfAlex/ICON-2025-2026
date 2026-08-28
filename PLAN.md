@@ -118,10 +118,12 @@ sulla macchina di analisi.
 - [x] `src/consolida/notturno.py` con `consolidamento.timer` alle 04:00
 - [x] Voci 37-42 del registro delle decisioni
 
-**Da fare sulla VM:**
+**Sulla VM, installato e verificato:**
 
-- [ ] Installare il consolidamento: `git pull` e `./deploy/install.sh`
-- [ ] Verificare dopo la prima notte: `./deploy/stato.sh`
+- [x] Consolidamento installato: `git pull` e `./deploy/install.sh`
+- [x] Verificato dopo le prime notti con `./deploy/stato.sh`: il timer e' scattato
+      regolarmente, **quattro giornate consolidate per 74 MB di parquet**, e il
+      **27 agosto ha copertura reale del 100% su entrambe le citta'**
 
 ---
 

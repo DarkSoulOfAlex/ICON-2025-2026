@@ -2325,6 +2325,22 @@ Aggiungere una terza citta' con un archivio piu' ricco renderebbe misurabile cio
 che oggi e' soltanto rappresentabile, e sarebbe l'estensione con il miglior
 rapporto fra costo e valore.
 
+**Su Roma il tempo reale copre solo la rete di superficie.** E' un limite emerso
+verificando i dati raccolti, e restringe l'ambito del progetto piu' di quanto il
+resto del documento lasci intendere. L'orario statico di Roma dichiara quattro
+linee di metropolitana con **6.614 corse programmate**, ma nel feed GTFS
+Real-Time non compare **nessuna** di esse: delle trecentodieci linee osservate in
+tempo reale, tutte sono autobus. Torino si comporta diversamente e trasmette
+anche il tram. La conseguenza non e' soltanto descrittiva. Il grafo tempo-espanso
+continua a contenere la metropolitana romana, perche' viene dall'orario statico,
+ma su quelle corse non esiste alcuna osservazione di ritardo: **su Roma il
+modello dei ritardi sara' quindi un modello dei ritardi degli autobus, non del
+trasporto pubblico romano**, e ogni risultato che lo impieghi va letto con questa
+restrizione. Un itinerario romano che passi per la metropolitana riceverebbe una
+probabilita' di arrivo fondata, per quel tratto, sul nulla. La valutazione finale
+andra' percio' ristretta alle coppie servite dalla sola superficie, oppure estesa
+con un'assunzione esplicita e dichiarata sui ritardi della metropolitana.
+
 **I limiti del modello geometrico.** La distanza fra due fermate e' quella in linea
 d'aria e non quella effettivamente percorribile a piedi: in presenza di una
 ferrovia, di un fiume o di una tangenziale fra due fermate vicine il tempo di

@@ -105,16 +105,17 @@ secondo momento, deve scattare alle quattro del mattino italiane e non alle sei.
 
 ---
 
-## 3. Clonare il repository — sulla VM
+## 3. Portare il repository sulla VM
+
+**Il repository sulla VM non e' un clone git.** E' stato trasferito con `tar` al
+momento del deploy, quindi `git pull` sulla VM **fallisce**: non c'e' alcun
+remoto da cui tirare. E' un dettaglio che si dimentica facilmente e che fa
+perdere tempo a ogni aggiornamento, quindi vale la pena averlo scritto.
 
 ```bash
 sudo apt update
-sudo apt install -y git python3-venv
-git clone <URL_DEL_REPOSITORY> ~/icon
-cd ~/icon
+sudo apt install -y python3-venv
 ```
-
-Se il repository non e' su un server remoto, si puo' copiarlo dal PC:
 
 ```bash
 # sul PC (Git Bash), dalla cartella del progetto
@@ -123,6 +124,55 @@ tar czf - --exclude=.venv --exclude=data --exclude=logs . | ssh vm-icon 'mkdir -
 
 `config.yaml` fa parte del repository, quindi gli indirizzi dei feed sono gia'
 configurati e non c'e' nulla da compilare.
+
+### Aggiornare i file dopo una modifica
+
+Stesso meccanismo, limitato a cio' che serve. `tar` sovrascrive i file elencati e
+non tocca il resto, quindi `data/` e `logs/` restano dove sono:
+
+```bash
+# sul PC (Git Bash), dalla cartella del progetto
+tar czf - scripts/ src/ | ssh vm-icon 'tar xzf - -C ~/icon'
+```
+
+### Eseguire uno script — sulla VM
+
+Sempre con l'interprete dell'ambiente virtuale, mai con `python` nudo: quello di
+sistema non ha le dipendenze del progetto e fallirebbe all'import.
+
+```bash
+cd ~/icon
+.venv/bin/python scripts/<script>.py --<opzioni>
+```
+
+### Se si volesse trasformare la VM in un clone git vero
+
+E' possibile e conviene, ora che il repository sta su un server remoto, ma
+**non va fatto cancellando `~/icon` e riclonando**: la cartella contiene
+`data/`, cioe' i dump grezzi e i parquet, che non sono versionati e **non sono
+ricostruibili**, piu' `logs/` e `deploy/vm.env`. Un clone in una cartella nuova
+li lascerebbe orfani, e un clone al posto di quella esistente li distruggerebbe.
+
+Il modo sicuro e' trasformare la cartella esistente in un repository **senza
+toccare i file**:
+
+```bash
+cd ~/icon
+git init
+git remote add origin <URL_DEL_REPOSITORY>
+git fetch origin
+git reset --mixed origin/main     # allinea l'indice, NON tocca il disco
+git status                        # mostra in che cosa la VM differisce
+```
+
+A questo punto `git status` elenca le differenze fra i file presenti e il ramo
+remoto, che e' esattamente cio' che un `git pull` avrebbe applicato. Dopo averle
+lette, si applicano con `git checkout -- .`, e da li' in avanti `git pull`
+funziona davvero.
+
+**Non eseguire mai `git clean` su questa cartella**: cancellerebbe `data/` e
+`logs/`, che a git risultano file non tracciati e che sono l'unica copia dei dati
+raccolti.
 
 ---
 

@@ -69,6 +69,13 @@ from src.gtfs.loader import carica_archivio  # noqa: E402
 CITTA = ("roma", "torino")
 FUSO = ZoneInfo("Europe/Rome")
 GIORNO = 86_400
+SOGLIA_CONFRONTO_MODI = 3_000
+"""Righe minime per modo, su fermate condivise, perche' il confronto sia un risultato.
+
+Sotto questa soglia una mediana e' un'indicazione e non una stima, e riportarla
+in tabella la farebbe sembrare piu' solida di quanto sia. Meglio una domanda
+aperta dichiarata che una tabella su base troppo sottile.
+"""
 
 TIPI_LINEA = {
     0: "tram", 1: "metro", 2: "treno", 3: "bus", 4: "traghetto",
@@ -151,7 +158,7 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
     print(f"    (tutte negative = indizio di margine negli orari; solo di giorno = altra causa)")
 
     quadro_senza_orario(d, citta, cartella_gtfs)
-    quadro_corse_spostate(d)
+    quadro_corse_spostate(d, citta, sorted(d.service_date.unique()), cartella_gtfs)
     quadro_collisioni(d)
     quadro_per_tipo(d, ore, citta, sorted(d.service_date.unique()), cartella_gtfs)
     return d
@@ -230,7 +237,8 @@ def quadro_senza_orario(d: pd.DataFrame, citta: str, cartella_gtfs: Path) -> Non
         print(f"      -> presenti = la corsa c'e' ma non quella stop_sequence")
 
 
-def quadro_corse_spostate(d: pd.DataFrame) -> None:
+def quadro_corse_spostate(d: pd.DataFrame, citta: str, date_servizio: Sequence[str],
+                          cartella_gtfs: Path) -> None:
     """Il terzo fenomeno: ritardi enormi che non sono salti di giorno.
 
     Ha una firma propria, distinta sia dal rollover sia dalle righe senza orario.
@@ -246,6 +254,7 @@ def quadro_corse_spostate(d: pd.DataFrame) -> None:
     grandi = d[(r.abs() > 3600) & ~lontane]
     if grandi.empty:
         print("    nessuna")
+        quadro_blocchi(d, grandi, citta, date_servizio, cartella_gtfs)
         return
     print(f"    righe: {len(grandi):,} ({len(grandi)/len(d):.3%}) su "
           f"{grandi.trip_id.nunique():,} corse")
@@ -273,6 +282,113 @@ def quadro_corse_spostate(d: pd.DataFrame) -> None:
         print(f"    (vicino a zero = rapporto corrente; molto negativo = previsione stantia)")
     ore = pd.to_datetime(grandi.timestamp_feed, unit="s", utc=True).dt.tz_convert(FUSO).dt.hour
     print(f"    ore di emissione: {dict(sorted(Counter(ore).items()))}")
+
+    quadro_blocchi(d, grandi, citta, date_servizio, cartella_gtfs)
+
+
+def quadro_blocchi(d: pd.DataFrame, grandi: pd.DataFrame, citta: str,
+                   date_servizio: Sequence[str], cartella_gtfs: Path) -> None:
+    """Il veicolo si porta dietro il ritardo sulla corsa successiva del suo turno?
+
+    E' il solo modo che questi dati offrono per distinguere le due letture del
+    fenomeno. Se una corsa e' davvero partita con un'ora e mezza di ritardo, il
+    veicolo quel ritardo lo trascina anche sulla corsa seguente dello stesso
+    turno, perche' e' lo stesso mezzo che deve tornare indietro. Se invece si
+    tratta di un'etichetta sbagliata - un veicolo che percorre una corsa
+    riportando l'identificativo di una precedente - le corse successive del turno
+    risultano normali, perche' il ritardo non e' mai esistito.
+
+    Il turno e' il ``block_id`` del GTFS. Dove non e' valorizzato la domanda resta
+    indecidibile, e va detto invece di sostituirlo con un'euristica.
+    """
+    print()
+    print("    --- 1-quater. Il ritardo si trasmette alla corsa successiva del turno? ---")
+    if grandi.empty:
+        print("    nessuna corsa spostata da esaminare")
+        return
+
+    blocco_di: dict[str, str] = {}
+    partenza_di: dict[str, int] = {}
+    for sd in date_servizio:
+        try:
+            from src.gtfs.indice_statico import carica_indice, versione_valida
+
+            indice = carica_indice(cartella_gtfs / citta / "index.json", citta)
+            voce = versione_valida(indice, sd)
+            if voce is None:
+                continue
+            archivio = carica_archivio(cartella_gtfs / citta / voce["file"], con_stop_times=True)
+        except Exception as errore:
+            print(f"    ({sd}: archivio non caricabile, {errore})")
+            continue
+        trips = archivio.trips
+        if "block_id" not in trips.columns:
+            print("    trips.txt non ha la colonna block_id: domanda indecidibile")
+            return
+        # Il campo puo' esserci ed essere vuoto: su Roma sono 179.177 stringhe
+        # vuote, che un controllo sui soli nulli non intercetta. Senza questo
+        # filtro tutte le corse finirebbero in un unico turno fittizio e il test
+        # restituirebbe un numero plausibile e privo di significato, che e' il
+        # modo peggiore in cui una misura puo' sbagliare.
+        etichetta = trips["block_id"].astype("string").fillna("").str.strip()
+        validi = trips[etichetta != ""]
+        if validi.empty:
+            print(f"    block_id presente ma **mai valorizzato** su {citta}: "
+                  f"{len(trips):,} corse, tutte con turno vuoto.")
+            print(f"    La domanda e' indecidibile su questa citta', e non viene forzata.")
+            return
+        blocco_di = {str(t): str(b) for t, b in
+                     validi[["trip_id", "block_id"]].itertuples(index=False)}
+        partenza_di = (archivio.stop_times.dropna(subset=["arrival_time"])
+                       .groupby("trip_id").arrival_time.min().astype("int64").to_dict())
+        break
+
+    if not blocco_di:
+        print("    nessun turno disponibile: domanda indecidibile")
+        return
+
+    # Corse successive, nello stesso turno, di quelle spostate.
+    per_blocco: dict[str, list[str]] = defaultdict(list)
+    for trip, blocco in blocco_di.items():
+        per_blocco[blocco].append(trip)
+    for blocco in per_blocco:
+        per_blocco[blocco].sort(key=lambda t: partenza_di.get(str(t), 0))
+
+    spostate = set(grandi.trip_id.unique())
+    successive: set[str] = set()
+    con_turno = 0
+    for trip in spostate:
+        blocco = blocco_di.get(str(trip))
+        if blocco is None:
+            continue
+        con_turno += 1
+        fratelli = per_blocco[blocco]
+        try:
+            posizione = fratelli.index(str(trip))
+        except ValueError:
+            continue
+        successive.update(fratelli[posizione + 1: posizione + 3])
+    successive -= spostate
+
+    print(f"    corse spostate: {len(spostate):,}, di cui con turno noto: {con_turno:,}")
+    if not successive:
+        print("    nessuna corsa successiva nel turno: domanda indecidibile")
+        return
+    osservate = d[d.trip_id.isin(successive)]
+    print(f"    corse successive nel turno: {len(successive):,}, "
+          f"di cui osservate nel feed: {osservate.trip_id.nunique():,} "
+          f"({len(osservate):,} righe)")
+    if osservate.empty:
+        print("    nessuna di esse compare nel feed: domanda indecidibile")
+        return
+    print(f"    ritardo delle corse successive : mediana "
+          f"{osservate.ritardo_secondi.median():>8.0f} s")
+    print(f"    ritardo di tutte le corse      : mediana "
+          f"{d.ritardo_secondi.median():>8.0f} s")
+    print(f"    quota delle successive con |ritardo| > 1 h: "
+          f"{(osservate.ritardo_secondi.abs() > 3600).mean():.1%}")
+    print(f"    (quota alta = il veicolo trascina il ritardo, quindi corsa davvero")
+    print(f"     in ritardo; quota bassa = etichetta sbagliata sulla sola corsa)")
 
 
 def quadro_collisioni(d: pd.DataFrame) -> None:
@@ -364,6 +480,14 @@ def quadro_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
         print("    nessuna fermata condivisa: si confrontano reti diverse, non modi.")
         return
     ristretto = noti[noti.stop_id.isin(condivise)]
+    minimo = min(len(ristretto[ristretto.tipo == tipo]) for tipo in presenti)
+    if minimo < SOGLIA_CONFRONTO_MODI:
+        print(f"    Il modo meno rappresentato ha {minimo:,} righe su fermate condivise,")
+        print(f"    sotto la soglia di {SOGLIA_CONFRONTO_MODI:,}: il confronto ristretto NON")
+        print(f"    viene riportato come risultato. La domanda resta aperta: con questi dati")
+        print(f"    non e' decidibile se la differenza fra modi sia differenza fra modi o")
+        print(f"    fra corridoi.")
+        return
     print(f"    Ristretto alle sole fermate condivise ({len(ristretto):,} righe):")
     print(f"    {'':>5} " + " ".join(f"{e:>16}" for e in etichette))
     print(f"    {'':>5} " + " ".join(

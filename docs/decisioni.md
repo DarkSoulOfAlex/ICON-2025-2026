@@ -1637,6 +1637,21 @@ variabili. Se su giornate intere la mediana risultasse negativa a tutte le ore,
 comprese la notte e le ore di morbida, l'ipotesi del margine negli orari si
 rafforzerebbe; se lo fosse solo di giorno, la spiegazione sarebbe un'altra.
 
+**Aggiornamento sui giorni pieni: smentita con il segno contrario.** Le
+conclusioni sopra venivano da una giornata parziale ed erano formulate come "non
+confermata". Sul 28 agosto, giornata intera, il quadro e' piu' netto e va
+registrato come tale. Su Torino la mediana del ritardo per fascia di anticipo,
+**identica in ciascuna delle cinque fasce orarie in cui e' replicata** e su basi
+fra le ottomila e le venticinquemila righe, e' di **-293 s per le fermate gia'
+passate, -144 fra zero e cinque minuti, -63 fra cinque e quindici, +853 fra
+quindici e trenta e +1.845 oltre**. Su Roma, dove le basi reggono, l'ora 13 da'
+-223, -177, -113, -100.
+
+La mediana diventa dunque **meno** negativa, fino a cambiare segno, quanto piu' la
+previsione e' lontana. Non e' assenza dell'effetto atteso: e' l'effetto opposto.
+L'ipotesi dell'ottimismo delle previsioni lontane non e' semplicemente non
+confermata, e' **smentita**.
+
 **La lezione di metodo.** Un andamento ordinato e monotono su tre punti e' molto
 persuasivo, e lo era per entrambi gli autori di questa voce. Ma prima di leggerlo
 come causale va chiesto se la finestra di misura permetta alle due variabili di

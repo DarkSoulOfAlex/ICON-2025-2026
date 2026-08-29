@@ -101,7 +101,7 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
 
     d = pd.read_parquet(
         percorso,
-        columns=["service_date", "trip_id", "route_id", "stop_sequence",
+        columns=["service_date", "trip_id", "route_id", "stop_id", "stop_sequence",
                  "orario_programmato", "orario_osservato", "ritardo_secondi",
                  "timestamp_feed"],
     )
@@ -134,10 +134,9 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
         print(f"    ore in cui il feed le ha emesse: {dict(sorted(Counter(ore).items()))}")
         print("    primi cinque casi:")
         for _, x in vicino.head(5).iterrows():
-            prog = pd.Timestamp(x.orario_programmato, unit="s", tz="UTC").tz_convert(FUSO)
-            oss = pd.Timestamp(x.orario_osservato, unit="s", tz="UTC").tz_convert(FUSO)
             print(f"      servizio {x.service_date} corsa {x.trip_id} seq {x.stop_sequence:>3} "
-                  f"prog {prog:%m-%d %H:%M} oss {oss:%m-%d %H:%M} ritardo {x.ritardo_secondi:,}")
+                  f"prog {_istante(x.orario_programmato)} oss {_istante(x.orario_osservato)} "
+                  f"ritardo {x.ritardo_secondi:,}")
 
     # ---- 3. Ritardo per ora del giorno, giornata intera
     print(f"\n    --- 3. Ritardo per ora PROGRAMMATA, giornata intera ---")
@@ -151,7 +150,10 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
     print(f"    ore con mediana negativa: {negative} su {len(tab)}")
     print(f"    (tutte negative = indizio di margine negli orari; solo di giorno = altra causa)")
 
-    tabella_per_tipo(d, ore, citta, sorted(d.service_date.unique()), cartella_gtfs)
+    quadro_senza_orario(d, citta, cartella_gtfs)
+    quadro_corse_spostate(d)
+    quadro_collisioni(d)
+    quadro_per_tipo(d, ore, citta, sorted(d.service_date.unique()), cartella_gtfs)
     return d
 
 
@@ -175,32 +177,165 @@ def tipi_di_linea(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path)
     return {}
 
 
-def tabella_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
-                     date_servizio: Sequence[str], cartella_gtfs: Path) -> None:
-    """Ritardo per ora e per tipo di veicolo.
+def _istante(valore) -> str:
+    """Formatta un istante POSIX, tollerando i nulli.
 
-    Serve a mettere alla prova la spiegazione del margine negli orari. Una linea
-    in sede propria - metro, tram protetto - non incontra la congestione che il
-    margine dovrebbe assorbire, quindi se il margine fosse davvero una risposta al
-    traffico dovrebbe risultare piu' piccolo li' e piu' grande sulle linee di
-    superficie nel traffico misto. Se invece fosse uguale ovunque, la spiegazione
-    sarebbe un'altra.
+    I nulli esistono davvero: quando la giunzione con l'orario statico non trova
+    la corsa, ``orario_programmato`` resta nullo e la riga finisce comunque nel
+    parquet, perche' il ritardo dichiarato dal feed non ha bisogno dell'orario
+    programmato per essere registrato. Formattarli senza controllo faceva
+    interrompere la diagnosi.
+    """
+    if pd.isna(valore):
+        return "     -    "
+    return f"{pd.Timestamp(int(valore), unit='s', tz='UTC').tz_convert(FUSO):%m-%d %H:%M}"
+
+
+def quadro_senza_orario(d: pd.DataFrame, citta: str, cartella_gtfs: Path) -> None:
+    """Righe la cui giunzione con l'orario statico non ha trovato corrispondenza.
+
+    Sono un problema perche' passano comunque: se il feed porta il ritardo
+    dichiarato, il ramo che richiede l'orario programmato non scatta e la riga
+    entra nel parquet con un ritardo valido ma senza il proprio riferimento
+    temporale. Per la Fase 3 sono righe su cui non si puo' calcolare nulla che
+    dipenda dall'orario, e vanno contate prima di decidere se tenerle.
     """
     print()
-    print("    --- 3-bis. Ritardo per ora e per TIPO DI LINEA ---")
+    print("    --- 1-bis. Righe senza orario programmato ---")
+    manca = d.orario_programmato.isna()
+    print(f"    righe con orario_programmato nullo: {manca.sum():,} ({manca.mean():.3%}) "
+          f"su {d[manca].trip_id.nunique():,} corse")
+    if not manca.any():
+        print("    nessuna: la giunzione trova sempre corrispondenza")
+        return
+    sotto = d[manca]
+    print(f"    di cui con ritardo comunque valorizzato: {sotto.ritardo_secondi.notna().sum():,} "
+          f"({sotto.ritardo_secondi.notna().mean():.1%})")
+    print(f"    mediana del loro ritardo: {sotto.ritardo_secondi.median()}")
+
+    # La corsa manca del tutto dall'orario, o manca solo quella fermata?
+    for sd in sorted(sotto.service_date.unique()):
+        parte = sotto[sotto.service_date == sd]
+        try:
+            programmato, _ = carica_orario(citta, sd, cartella_gtfs)
+        except Exception as errore:
+            print(f"    ({sd}: orario non caricabile, {errore})")
+            continue
+        corse_note = {t for t, _ in programmato}
+        corse = set(parte.trip_id.unique())
+        assenti = corse - corse_note
+        print(f"    {sd}: {len(corse):,} corse coinvolte, di cui {len(assenti):,} "
+              f"({len(assenti)/len(corse):.0%}) assenti dall'orario statico")
+        print(f"      -> assenti = corse aggiunte in tempo reale o archivio che non le copre")
+        print(f"      -> presenti = la corsa c'e' ma non quella stop_sequence")
+
+
+def quadro_corse_spostate(d: pd.DataFrame) -> None:
+    """Il terzo fenomeno: ritardi enormi che non sono salti di giorno.
+
+    Ha una firma propria, distinta sia dal rollover sia dalle righe senza orario.
+    Si misura per distinguere una previsione stantia - il feed che continua a
+    trasmettere una corsa ferma - da una corsa realmente spostata nel tempo, che
+    ha lo stesso ritardo su tutte le proprie fermate e un orario osservato
+    prossimo all'istante di emissione.
+    """
+    print()
+    print("    --- 1-ter. Ritardi enormi che NON sono salti di giorno ---")
+    r = d.ritardo_secondi
+    lontane = ((r + GIORNO).abs() <= 600) | ((r - GIORNO).abs() <= 600)
+    grandi = d[(r.abs() > 3600) & ~lontane]
+    if grandi.empty:
+        print("    nessuna")
+        return
+    print(f"    righe: {len(grandi):,} ({len(grandi)/len(d):.3%}) su "
+          f"{grandi.trip_id.nunique():,} corse")
+    conc = grandi.trip_id.value_counts()
+    print(f"    concentrazione: le prime 10 corse fanno {conc.head(10).sum()/len(grandi):.1%}")
+    coinvolte = set(grandi.trip_id)
+    tutte = d[d.trip_id.isin(coinvolte)]
+    print(f"    su quelle corse, quota di righe grandi: {len(grandi)/len(tutte):.1%}")
+    print(f"    (vicino a 1 = la corsa e' spostata per intero; bassa = poche fermate anomale)")
+
+    # Ritardo costante lungo la corsa? Uno spostamento uniforme ha varianza bassa.
+    per_corsa = grandi.groupby("trip_id").ritardo_secondi.agg(["std", "mean", "size"])
+    print(f"    dispersione del ritardo DENTRO la corsa: mediana della std "
+          f"{per_corsa['std'].median():.0f} s, contro un ritardo medio di "
+          f"{per_corsa['mean'].median():.0f} s")
+    print(f"    (std piccola rispetto alla media = corsa spostata in blocco)")
+
+    # Previsione stantia o rapporto corrente? Se l'osservato segue l'istante di
+    # emissione, il feed sta dicendo "sta passando ora", non ripetendo una stima.
+    valide = grandi.dropna(subset=["orario_osservato", "timestamp_feed"])
+    if len(valide):
+        scarto = (valide.orario_osservato - valide.timestamp_feed) / 60.0
+        print(f"    osservato meno istante di emissione: mediana {scarto.median():.0f} min, "
+              f"q1 {scarto.quantile(.25):.0f}, q3 {scarto.quantile(.75):.0f}")
+        print(f"    (vicino a zero = rapporto corrente; molto negativo = previsione stantia)")
+    ore = pd.to_datetime(grandi.timestamp_feed, unit="s", utc=True).dt.tz_convert(FUSO).dt.hour
+    print(f"    ore di emissione: {dict(sorted(Counter(ore).items()))}")
+
+
+def quadro_collisioni(d: pd.DataFrame) -> None:
+    """Collisioni della chiave di deduplica, misurate sull'intero file.
+
+    Contarle su un campione di dump non le trova: il fenomeno e' notturno, e sei
+    finestre distribuite sulla giornata hanno bassa probabilita' di cadere a
+    cavallo della mezzanotte. Sul parquet si misura per intero.
+    """
+    print()
+    print("    --- 2. Collisioni della chiave di deduplica (sul file intero) ---")
+    per_coppia = d.groupby(["trip_id", "stop_sequence"]).service_date.nunique()
+    collisioni = int((per_coppia > 1).sum())
+    print(f"    coppie (corsa, fermata) distinte: {len(per_coppia):,}")
+    print(f"    con piu' di una data di servizio : {collisioni:,} ({collisioni/len(per_coppia):.3%})")
+    if collisioni:
+        print(f"    ogni collisione e' almeno una riga soppressa: la chiave di")
+        print(f"    deduplica non contiene la data di servizio")
+        date_coinvolte = d[d.set_index(["trip_id", "stop_sequence"]).index.isin(
+            per_coppia[per_coppia > 1].index)].service_date.value_counts()
+        print(f"    date coinvolte: {dict(date_coinvolte)}")
+
+
+def quadro_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
+                    date_servizio: Sequence[str], cartella_gtfs: Path) -> None:
+    """Ritardo per ora e per tipo di veicolo, con il controllo di legittimita'.
+
+    Serve a mettere alla prova la spiegazione del margine negli orari: una linea
+    in sede propria non incontra la congestione che il margine dovrebbe
+    assorbire. Il confronto fra modi e' pero' legittimo solo se i modi servono
+    gli stessi luoghi: se il tram copre corridoi che il bus non tocca, si
+    confrontano reti diverse e non modi diversi. Per questo si riporta anche il
+    confronto ristretto alle **fermate servite da entrambi**, che e' l'unico in
+    cui la differenza puo' essere attribuita al modo.
+    """
+    print()
+    print("    --- 3-bis. Ritardo per tipo di linea ---")
     mappa = tipi_di_linea(citta, date_servizio, cartella_gtfs)
     if not mappa:
         print("    tipi di linea non disponibili")
         return
+
+    tipi_statici = Counter(mappa.values())
     d = d.assign(ora=ore, tipo=d.route_id.map(mappa))
+    tipi_feed = Counter(d.tipo.dropna().astype(int))
+    print(f"    tipi nell'orario statico : "
+          + ", ".join(f"{TIPI_LINEA.get(k, k)}={v}" for k, v in sorted(tipi_statici.items())))
+    print(f"    tipi presenti nel FEED   : "
+          + ", ".join(f"{TIPI_LINEA.get(k, k)}={v:,}" for k, v in sorted(tipi_feed.items())))
+    mancanti = set(tipi_statici) - set(tipi_feed)
+    if mancanti:
+        print(f"    ASSENTI dal feed: "
+              + ", ".join(TIPI_LINEA.get(k, str(k)) for k in sorted(mancanti))
+              + " -> il confronto fra modi non e' possibile su questa citta'")
+
     noti = d[d.tipo.notna()]
-    if noti.empty:
-        print("    nessuna riga con tipo di linea riconosciuto")
+    if noti.empty or noti.tipo.nunique() < 2:
+        print("    meno di due tipi presenti: confronto non eseguibile")
         return
     presenti = sorted(noti.tipo.unique())
     etichette = [TIPI_LINEA.get(int(x), f"tipo {int(x)}") for x in presenti]
-    print(f"    righe con tipo noto: {len(noti):,} su {len(d):,}")
-    print(f"    {'ora':>4} " + " ".join(f"{e:>16}" for e in etichette))
+
+    print(f"    {'ora':>5} " + " ".join(f"{e:>16}" for e in etichette))
     for ora in sorted(noti.ora.unique()):
         blocco = noti[noti.ora == ora]
         celle = []
@@ -208,25 +343,33 @@ def tabella_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
             s = blocco[blocco.tipo == tipo]
             celle.append(f"{_mediana(s.ritardo_secondi.values):>8}({len(s):>6,})"
                          if len(s) else f"{'-':>16}")
-        print(f"    {ora:>4} " + " ".join(celle))
-    print(f"    {'tutte':>4} " + " ".join(
+        print(f"    {ora:>5} " + " ".join(celle))
+    print(f"    {'tutte':>5} " + " ".join(
         f"{_mediana(noti[noti.tipo == tipo].ritardo_secondi.values):>8}"
         f"({len(noti[noti.tipo == tipo]):>6,})" for tipo in presenti))
 
-
-def corse_oltre_24h(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path) -> set[str]:
-    """Corse il cui orario statico supera le 24 ore, per le date indicate."""
-    corse: set[str] = set()
-    for sd in date_servizio:
-        try:
-            programmato, _ = carica_orario(citta, sd, cartella_gtfs)
-        except Exception as errore:  # l'archivio puo' mancare per quella data
-            print(f"    (orario non caricabile per {sd}: {errore})")
-            continue
-        for (trip, _seq), (_stop, secondi) in programmato.items():
-            if secondi >= GIORNO:
-                corse.add(trip)
-    return corse
+    # ---- Il confronto e' legittimo? Fermate servite da piu' di un modo.
+    print()
+    print("    Controllo di legittimita': i modi servono gli stessi luoghi?")
+    per_fermata = noti.groupby("stop_id").tipo.nunique()
+    condivise = set(per_fermata[per_fermata > 1].index)
+    print(f"    fermate servite da un solo modo: {int((per_fermata == 1).sum()):,}")
+    print(f"    fermate servite da piu' modi   : {len(condivise):,}")
+    for tipo in presenti:
+        s = noti[noti.tipo == tipo]
+        quota = s.stop_id.isin(condivise).mean() if len(s) else 0.0
+        print(f"      {TIPI_LINEA.get(int(tipo), tipo):>12}: {quota:.1%} delle righe "
+              f"su fermate condivise")
+    if not condivise:
+        print("    nessuna fermata condivisa: si confrontano reti diverse, non modi.")
+        return
+    ristretto = noti[noti.stop_id.isin(condivise)]
+    print(f"    Ristretto alle sole fermate condivise ({len(ristretto):,} righe):")
+    print(f"    {'':>5} " + " ".join(f"{e:>16}" for e in etichette))
+    print(f"    {'':>5} " + " ".join(
+        f"{_mediana(ristretto[ristretto.tipo == tipo].ritardo_secondi.values):>8}"
+        f"({len(ristretto[ristretto.tipo == tipo]):>6,})" for tipo in presenti))
+    print(f"    Se qui la differenza fra modi sparisce, era differenza fra corridoi.")
 
 
 # =============================================================================
@@ -467,6 +610,18 @@ def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
     a = d.anticipo
     print(f"    mediana {a.median()/60:>6.1f} min | q1 {a.quantile(.25)/60:>6.1f} | "
           f"q3 {a.quantile(.75)/60:>6.1f} | max {a.max()/60:>6.0f} min  (n={len(a):,})")
+    # Un anticipo di molte ore non e' una previsione lontana: e' l'istante di
+    # passaggio calcolato su un ritardo enorme, quindi la stessa anomalia del
+    # quadro 1-ter vista da un altro lato. Si verifica invece di supporlo.
+    estremi = d[d.anticipo > 6 * 3600]
+    if len(estremi):
+        print(f"    righe con anticipo oltre 6 h: {len(estremi):,} ({len(estremi)/len(d):.3%}) "
+              f"su {estremi.trip.nunique():,} corse")
+        print(f"      loro ritardo: mediana {estremi.rit.median():,.0f} s, "
+              f"quota con |ritardo| > 1 h: {(estremi.rit.abs() > 3600).mean():.1%}")
+        print(f"      (quota alta = l'anticipo estremo E' il ritardo estremo, non una previsione)")
+    else:
+        print(f"    nessuna riga con anticipo oltre 6 h")
 
     print(f"\n    --- 5. Ritardo per anticipo, CONTROLLANDO per l'ora programmata ---")
     print(f"    {'ora':>4} " + " ".join(f"{et:>14}" for _, _, et in FASCE_ANTICIPO))

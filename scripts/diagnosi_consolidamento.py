@@ -10,13 +10,23 @@ previsione sono la stessa variabile travestita, quindi quelle conclusioni non
 sono trasferibili: servono giornate intere.
 
 Lo script non modifica nulla. Legge i parquet consolidati e un campione dei dump
-grezzi, e stampa sei quadri:
+grezzi, e stampa i quadri seguenti. I primi sono nati come uno solo e si sono
+divisi via via che la diagnosi distingueva fenomeni che all'inizio sembravano lo
+stesso: e' la ragione della numerazione con i suffissi, che si e' preferito
+conservare perche' i referti gia' prodotti vi fanno riferimento.
 
-1. **Il rollover.** Quante righe cadono vicino a +/- 24 ore, da quali corse
-   vengono, se quelle corse abbiano davvero orari statici oltre le 24 ore e in
-   quale ora del giorno il feed le abbia emesse. Distingue il salto di giorno da
-   una previsione stantia di una corsa ferma, che ha una firma diversa: valori
-   grandi ma non prossimi a 86.400, concentrati su poche corse.
+1. **Il rollover**, cioe' i salti di giorno: quante righe, da quali corse, se
+   quelle corse abbiano davvero orari statici oltre le 24 ore e in quale ora il
+   feed le abbia emesse.
+1-bis. **Le righe senza orario programmato**, che entrano comunque nel parquet
+   perche' il ritardo dichiarato dal feed non ne ha bisogno, e la loro causa.
+1-ter. **I ritardi enormi che non sono salti di giorno**, separati dai primi con
+   il criterio del residuo.
+1-quater. **Il test dei turni**: se il veicolo trascini il ritardo sulla corsa
+   successiva del proprio turno, che distinguerebbe una corsa davvero in ritardo
+   da un'etichetta sbagliata.
+1-quinquies. **La forma delle anomalie dentro la corsa**: se le fermate anomale
+   siano contigue o sparse, e se il ritardo si addensi su valori ricorrenti.
 2. **Il collo della deduplica.** Quante coppie (corsa, fermata) compaiono con
    piu' di una data di servizio dentro la stessa cartella. La chiave di deduplica
    non contiene la data di servizio, quindi ogni collisione e' una riga soppressa
@@ -25,6 +35,8 @@ grezzi, e stampa sei quadri:
    negativa a **tutte** le ore, comprese la notte e le ore di morbida, sarebbe un
    indizio a favore del margine inserito negli orari; se lo fosse solo di giorno,
    la spiegazione e' un'altra.
+3-bis. **Il ritardo per tipo di linea**, con il controllo di legittimita' sulle
+   sole fermate servite da piu' di un modo.
 4. **L'anticipo con cui le previsioni sono emesse**, confrontato fra le due
    citta'. Sulla giornata parziale erano 15,9 minuti di mediana su Roma e 2,1 su
    Torino: se regge, e' una differenza strutturale fra i due produttori.
@@ -70,7 +82,23 @@ CITTA = ("roma", "torino")
 FUSO = ZoneInfo("Europe/Rome")
 GIORNO = 86_400
 SOGLIA_CONFRONTO_MODI = 3_000
+"""Righe minime per modo, su fermate condivise, perche' il confronto sia un risultato.
+
+Sotto questa soglia una mediana e' un'indicazione e non una stima, e riportarla in
+tabella la farebbe sembrare piu' solida di quanto sia. Meglio una domanda aperta
+dichiarata che una tabella su base troppo sottile.
+"""
+
 SOGLIA_TEST_TURNI = 200
+"""Righe minime sulle corse successive perche' il test dei turni decida qualcosa.
+
+Sul 28 agosto quel test ha dato "40% delle corse successive in ritardo oltre
+l'ora" su **due** corse spostate, una sola osservata e quindici righe. Un numero
+del genere non e' un indizio debole, e' rumore con una percentuale davanti, e
+stampato accanto agli altri sembrerebbe dello stesso rango. Sotto la soglia si
+dichiara l'indecidibilita' invece del valore.
+"""
+
 RESIDUO_PLAUSIBILE = 3_600
 """Scarto massimo, tolte 24 ore, perche' un ritardo sia un salto di giorno.
 
@@ -82,20 +110,6 @@ distanza dal valore tondo ma il **residuo**: si tolgono ventiquattro ore e si
 guarda se cio' che resta sia un ritardo plausibile. Un'ora di residuo copre i
 ritardi reali senza catturare nient'altro, perche' un ritardo autentico di
 ventitre ore - il solo che verrebbe scambiato - non esiste.
-"""
-"""Righe minime sulle corse successive perche' il test dei turni decida qualcosa.
-
-Sul 28 agosto quel test ha dato "40% delle corse successive in ritardo oltre
-l'ora" su **due** corse spostate, una sola osservata e quindici righe. Un numero
-del genere non e' un indizio debole, e' rumore con una percentuale davanti, e
-stampato accanto agli altri sembrerebbe dello stesso rango. Sotto la soglia si
-dichiara l'indecidibilita' invece del valore.
-"""
-"""Righe minime per modo, su fermate condivise, perche' il confronto sia un risultato.
-
-Sotto questa soglia una mediana e' un'indicazione e non una stima, e riportarla
-in tabella la farebbe sembrare piu' solida di quanto sia. Meglio una domanda
-aperta dichiarata che una tabella su base troppo sottile.
 """
 
 TIPI_LINEA = {

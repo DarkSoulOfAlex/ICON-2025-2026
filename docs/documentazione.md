@@ -1704,9 +1704,13 @@ accesa interroga a intervalli fissi i due feed GTFS Real-Time [14] di ciascuna
 citta', `trip_updates` e `vehicle_positions`, conserva i dump grezzi, archivia
 l'orario statico ogni volta che cambia e consolida ogni notte le osservazioni
 della giornata in formato colonnare, calcolando lo scostamento fra orario
-osservato e orario programmato. Alla data di scrittura risultano **quattro
-giornate consolidate per 74 MB di dati colonnari**, e la copertura reale misurata
-sul 27 agosto e' del **100% su entrambe le citta'**.
+osservato e orario programmato. La raccolta prosegue quotidianamente e la
+copertura reale misurata sul 27 agosto e' del **100% su entrambe le citta'**; il
+volume complessivo verra' riportato a raccolta conclusa, quando i dati saranno
+rigenerati per intero, perche' una cifra presa a meta' campagna invecchia ogni
+notte. Per dare un ordine di grandezza, una sola giornata di Roma produce circa
+sessanta megabyte di dati colonnari a fronte di quattrocentosettanta di dump
+grezzi.
 
 La copertura non e' pero' l'unica grandezza da guardare, e il registro delle
 interruzioni tiene traccia di cio' che la copertura non vede. Lo stesso 27 agosto
@@ -2240,9 +2244,8 @@ esse e' un punto da cui un altro gruppo potrebbe ripartire.
 **La risposta alla domanda di ricerca non c'e' ancora.** E' la lacuna piu'
 importante. Il vantaggio del criterio probabilistico e' stato misurato su ritardi
 inventati; se si conservi sui ritardi reali e' esattamente cio' che resta da
-verificare. La raccolta e' completa e funzionante, con quattro giornate gia'
-consolidate per 74 MB, ma la stima delle distribuzioni e il conseguente
-backtesting non sono stati eseguiti.
+verificare. La raccolta e' funzionante e prosegue, ma la stima delle
+distribuzioni e il conseguente backtesting non sono stati eseguiti.
 
 **Una strada considerata e scartata, con la ragione: i Knowledge Graph e le
 ontologie.** L'ipotesi e' stata valutata concretamente — pubblicare la base di

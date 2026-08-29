@@ -347,3 +347,25 @@ def test_la_soppressione_a_torto_si_conta_nell_altra_direzione(tmp_path: Path) -
     assert riepilogo.righe_scritte == 2
     assert riepilogo.soppresse_dalla_data == 1
     assert riepilogo.duplicate_dalla_data == 0
+
+
+def test_sotto_la_politica_ultimo_la_data_nella_chiave_salva_un_passaggio(
+    tmp_path: Path,
+) -> None:
+    """Sotto ``ultimo`` il difetto della chiave e' piu' grave, non piu' lieve.
+
+    Quella politica conserva una riga per chiave, quindi la chiave senza data ne
+    terrebbe **una sola** per due giorni di servizio: si perderebbe un passaggio
+    intero, non una ripetizione. I contatori devono misurarlo, altrimenti
+    riporterebbero zero e lo zero verrebbe letto come "nessun effetto" invece che
+    come "non misurato".
+    """
+    dump = [
+        _dump(1_000, [("T1", "A", 1, 1_800_000_000)], start_date="20260825"),
+        _dump(2_000, [("T1", "A", 1, 1_800_086_400)], start_date="20260826"),
+    ]
+    _prepara(tmp_path, dump, ["000500.pb", "001000.pb"])
+    riepilogo = consolida_giorno("prova", GIORNO, tmp_path, Politica.dal_nome("ultimo"))
+
+    assert riepilogo.righe_scritte == 2, "un passaggio per giorno di servizio"
+    assert riepilogo.soppresse_dalla_data == 1, "la chiave storica ne avrebbe tenuto uno solo"

@@ -123,8 +123,9 @@ sulla macchina di analisi.
 
 - [x] Consolidamento installato: `git pull` e `./deploy/install.sh`
 - [x] Verificato dopo le prime notti con `./deploy/stato.sh`: il timer e' scattato
-      regolarmente, **quattro giornate consolidate per 74 MB di parquet**, e il
-      **27 agosto ha copertura reale del 100% su entrambe le citta'**
+      regolarmente e il **27 agosto ha copertura reale del 100% su entrambe le
+      citta'**. Il volume si misura a raccolta conclusa: una cifra presa a meta'
+      campagna invecchia ogni notte
 
 ---
 

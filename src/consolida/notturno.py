@@ -358,6 +358,7 @@ def consolida_giorno(
     # l'unico numero disponibile sarebbe quello delle coppie con piu' date, che
     # misura una cosa diversa e fa sembrare il difetto piu' grande di quanto sia.
     ultimo_valore_storico: dict[tuple[str, int], int | None] = {}
+    chiavi_storiche: set[tuple[str, int]] = set()
     soppresse_dalla_data = [0]
     duplicate_dalla_data = [0]
     # Contatore in una lista per poterlo aggiornare dentro il ciclo senza nonlocal.
@@ -464,7 +465,14 @@ def consolida_giorno(
                 ]
 
                 if politica.nome == "ultimo":
+                    # Sotto questa politica il difetto e' di natura diversa e va
+                    # misurato diversamente: si conserva una riga per chiave,
+                    # quindi la chiave storica ne terrebbe **una sola** per due
+                    # giorni di servizio, perdendo un passaggio intero invece di
+                    # una ripetizione. La differenza fra i due conteggi di chiavi
+                    # e' esattamente il numero di passaggi persi.
                     ultima_riga[chiave] = riga
+                    chiavi_storiche.add(chiave_orario)
                     continue
                 if ultimo_valore.get(chiave) == osservato:
                     # Si scarta. La chiave storica l'avrebbe invece scritta?
@@ -497,6 +505,8 @@ def consolida_giorno(
     mb_grezzi = sorgente.byte_totali() / 1_048_576
     mb_parquet = destinazione.stat().st_size / 1_048_576
     passaggi = len(ultimo_valore) or len(ultima_riga)
+    if politica.nome == "ultimo":
+        soppresse_dalla_data[0] = len(ultima_riga) - len(chiavi_storiche)
 
     return Riepilogo(
         citta=citta,

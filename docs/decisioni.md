@@ -1566,3 +1566,79 @@ attribuirebbe una varianza che non ha.
 ricostruito dall'itinerario coincide esattamente con quello dell'etichetta di
 Pareto su tutti i 106 candidati esaminati. Prima della correzione i due valori
 divergevano su tutti gli itinerari con coda a piedi.
+
+---
+
+## Diagnosi del consolidamento
+
+### 56. L'ottimismo delle previsioni lontane: ipotesi formulata e smentita dai dati
+
+**L'ipotesi.** I parquet mostravano una mediana del ritardo negativa su entrambe
+le citta', circa -110 s a Roma e -124 s a Torino, cioe' la maggioranza dei mezzi
+in anticipo: non plausibile. La spiegazione proposta era che non stessimo
+misurando ritardi ma **previsioni**: uno `stop_time_update` per una fermata non
+ancora raggiunta e' la stima dell'azienda, e le stime per fermate lontane
+sarebbero ottimiste. Ne seguiva che il consolidamento andasse filtrato tenendo,
+per ogni passaggio, il solo aggiornamento emesso al momento del passaggio.
+
+**Perche' sembrava vera.** Su Roma la mediana per ora programmata scendeva in
+modo netto e ordinato: **-51 s all'ora 13, -264 all'ora 14, -530 all'ora 15**. Le
+fermate piu' lontane nel futuro avevano ritardi via via piu' negativi, che e'
+esattamente la firma attesa dall'ipotesi. L'andamento sembrava conclusivo.
+
+**Perche' era sbagliata.** La misura veniva da una finestra di raccolta di
+**cinquanta minuti**, dalle 13:23 alle 14:13 del primo giorno. In una finestra
+cosi' stretta l'ora programmata e l'anticipo della previsione **non sono due
+variabili ma una sola travestita**: una fermata programmata alle 15 e' per forza
+osservata con almeno tre quarti d'ora di anticipo, e una programmata alle 13 e'
+per forza gia' passata. L'andamento orario non poteva quindi dire nulla
+sull'anticipo, e leggerlo come se lo dicesse era una correlazione spuria per
+costruzione.
+
+Separando le due variabili, l'effetto sparisce. La mediana del ritardo per fascia
+di anticipo, su Roma, e' -190 s per le fermate gia' passate, -138 fra zero e
+cinque minuti, -108 fra cinque e quindici, -120 fra quindici e trenta e -192 fra
+trenta e sessanta: **nessuna tendenza**. Se le previsioni lontane fossero
+ottimiste quella colonna crescerebbe in modo monotono. Controllando anche per
+l'ora programmata il quadro si conferma, e dentro l'ora 13 la mediana passa
+addirittura da -157 a +217 al crescere dell'anticipo, cioe' nella direzione
+opposta.
+
+Il filtro proposto e' stato comunque misurato: non risolve. Su Roma sposta la
+mediana da -134 a -164 s, quindi la peggiora; su Torino da -166 a -129, e in
+nessuna delle due appiattisce l'andamento orario.
+
+**Che cosa resta.** Tutte le spiegazioni meccaniche sono state escluse: la
+conversione degli orari oltre le 24 ore e' corretta, la giunzione con l'orario
+statico pure - su Roma la nostra ricostruzione coincide con il `delay` dichiarato
+dall'azienda con scarto mediano nullo e concordanza entro 60 s sul 99,6% degli
+eventi - il `delay` esplicito e' gia' preferito dove esiste, e arrivo e partenza
+nell'orario statico coincidono sul 100% delle fermate, quindi non c'e' sosta che
+possa spiegare uno scarto. Resta come spiegazione piu' plausibile che la mediana
+negativa sia **cio' che le aziende dichiarano**, verosimilmente per il margine
+inserito negli orari pubblicati. Non e' pero' ancora una conclusione: poggia su
+una giornata parziale, e va verificata sui giorni pieni prima di entrare nel
+documento.
+
+**Che cosa il filtro ha comunque prodotto.** Due misure che restano valide
+indipendentemente dall'ipotesi. La prima e' che le previsioni sono emesse con
+anticipi molto diversi nelle due citta': mediana **15,8 minuti su Roma** contro
+**2,1 su Torino**, con terzo quartile 27,4 contro 4,4. Le due colonne
+`ritardo_secondi` non sono la stessa grandezza, e la Fase 3 deve trattarle
+diversamente. La seconda e' il dimensionamento: filtrando al momento del
+passaggio sopravvive il 3,9% delle righe su Roma e circa il 10% su Torino, cioe'
+dell'ordine di 330 mila e 145 mila righe al giorno, abbondanti per
+l'apprendimento.
+
+**Come si potrebbe verificare.** `scripts/diagnosi_consolidamento.py` rifa
+l'intera diagnosi su una giornata piena, con il quadro dell'anticipo calcolato
+**dentro** ciascuna fascia oraria, che e' l'unico modo di separare le due
+variabili. Se su giornate intere la mediana risultasse negativa a tutte le ore,
+comprese la notte e le ore di morbida, l'ipotesi del margine negli orari si
+rafforzerebbe; se lo fosse solo di giorno, la spiegazione sarebbe un'altra.
+
+**La lezione di metodo.** Un andamento ordinato e monotono su tre punti e' molto
+persuasivo, e lo era per entrambi gli autori di questa voce. Ma prima di leggerlo
+come causale va chiesto se la finestra di misura permetta alle due variabili di
+variare separatamente: qui non lo permetteva, e nessuna quantita' di dati raccolti
+in quella finestra avrebbe potuto rivelarlo.

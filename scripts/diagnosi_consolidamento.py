@@ -559,8 +559,11 @@ def quadro_collisioni(d: pd.DataFrame) -> None:
     print(f"    coppie (corsa, fermata) distinte: {len(per_coppia):,}")
     print(f"    con piu' di una data di servizio : {collisioni:,} ({collisioni/len(per_coppia):.3%})")
     if collisioni:
-        print(f"    ogni collisione e' almeno una riga soppressa: la chiave di")
-        print(f"    deduplica non contiene la data di servizio")
+        print(f"    ATTENZIONE: questo numero NON misura l'effetto della chiave di")
+        print(f"    deduplica. Quelle coppie devono esistere, perche' la stessa corsa")
+        print(f"    ricorre in giorni diversi. Cio' che conta e' quante righe la chiave")
+        print(f"    senza data scriverebbe in piu' o in meno, ed e' misurato dai due")
+        print(f"    contatori del riepilogo di consolida_giorno, non da qui.")
         date_coinvolte = d[d.set_index(["trip_id", "stop_sequence"]).index.isin(
             per_coppia[per_coppia > 1].index)].service_date.value_counts()
         print(f"    date coinvolte: {dict(date_coinvolte)}")

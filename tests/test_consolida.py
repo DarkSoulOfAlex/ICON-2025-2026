@@ -207,9 +207,9 @@ def test_due_giorni_di_servizio_nella_stessa_cartella_non_si_sovrascrivono(
 
     Attorno alla mezzanotte una cartella contiene due giorni di servizio, perche'
     le corse notturne del giorno prima sono ancora in circolazione. Senza la data
-    nella chiave i due passaggi condividono lo stesso posto e il secondo viene
-    scartato come valore invariato. Misurato sui dati veri, il difetto valeva
-    quasi 194.000 righe su Roma in una sola giornata.
+    nella chiave i due passaggi condividono lo stesso posto nello stato della
+    deduplica. Quanto questo costi in righe e' misurato dai due contatori del
+    riepilogo, non da questo test, che verifica la sola correttezza.
     """
     _prepara(
         tmp_path,
@@ -299,3 +299,51 @@ def test_le_colonne_di_provenienza_distinguono_le_due_origini(tmp_path: Path) ->
     assert tabella.loc[2, "origine_ritardo"] == "dichiarato"
     # Il ritardo dichiarato va usato tale e quale, non ricalcolato.
     assert tabella.loc[2, "ritardo_secondi"] == 90
+
+
+def test_si_misura_l_effetto_della_data_nella_chiave(tmp_path: Path) -> None:
+    """Il conteggio delle coppie con piu' date non misura l'effetto della correzione.
+
+    Quelle coppie devono esistere: la stessa corsa ricorre in giorni diversi. Cio'
+    che conta e' quante righe la chiave senza data avrebbe scritto in piu' o in
+    meno, e sono due direzioni distinte che si compensano.
+
+    Qui si costruisce il caso che produce righe **in piu'** con la chiave storica:
+    lo stesso passaggio alternato fra due giorni di servizio. Alternando, la
+    chiave senza data vede un valore diverso a ogni giro e registra un cambio che
+    non c'e'.
+    """
+    dump = [
+        _dump(1_000, [("T1", "A", 1, 1_800_000_000)], start_date="20260825"),
+        _dump(2_000, [("T1", "A", 1, 1_800_086_400)], start_date="20260826"),
+        _dump(3_000, [("T1", "A", 1, 1_800_000_000)], start_date="20260825"),
+        _dump(4_000, [("T1", "A", 1, 1_800_086_400)], start_date="20260826"),
+    ]
+    _prepara(tmp_path, dump, ["000500.pb", "001000.pb", "001500.pb", "002000.pb"])
+    riepilogo = consolida_giorno("prova", GIORNO, tmp_path, Politica.dal_nome("tutti"))
+
+    # Con la data nella chiave restano due righe: un passaggio per giorno, e le
+    # ripetizioni successive sono valori invariati.
+    assert riepilogo.righe_scritte == 2
+    # La chiave storica ne avrebbe scritte quattro, vedendo un cambio ogni volta.
+    assert riepilogo.duplicate_dalla_data == 2
+    assert riepilogo.soppresse_dalla_data == 0
+
+
+def test_la_soppressione_a_torto_si_conta_nell_altra_direzione(tmp_path: Path) -> None:
+    """Il caso opposto, piu' raro: due giorni diversi con lo stesso orario osservato.
+
+    E' possibile solo se il feed riporta lo stesso istante per due passaggi di
+    giorni di servizio diversi. La chiave storica lo scarterebbe come valore
+    invariato, perdendo un passaggio vero.
+    """
+    dump = [
+        _dump(1_000, [("T1", "A", 1, 1_800_000_000)], start_date="20260825"),
+        _dump(2_000, [("T1", "A", 1, 1_800_000_000)], start_date="20260826"),
+    ]
+    _prepara(tmp_path, dump, ["000500.pb", "001000.pb"])
+    riepilogo = consolida_giorno("prova", GIORNO, tmp_path, Politica.dal_nome("tutti"))
+
+    assert riepilogo.righe_scritte == 2
+    assert riepilogo.soppresse_dalla_data == 1
+    assert riepilogo.duplicate_dalla_data == 0

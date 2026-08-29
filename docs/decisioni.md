@@ -1724,9 +1724,33 @@ fenomeni. Il criterio corretto non guarda la distanza dal valore tondo ma il
 ritardo plausibile, sotto l'ora. Non cattura nulla di spurio, perche' l'unico caso
 che verrebbe scambiato sarebbe un ritardo autentico di ventitre ore.
 
+**Avvertenza: la tabella qui sopra e' calcolata con il criterio superato, e va
+rifatta.** Le cinque righe vengono dalla classificazione stretta, quella che
+riconosceva come salto di giorno solo cio' che cadeva entro dieci minuti da
+86.400 s. Con il criterio del residuo, che e' quello corretto, molte righe si
+spostano dal terzo fenomeno ai salti di giorno: sul 28 agosto sono 49.280 contro
+le 15.597 della classificazione stretta, e le corse esaminate dal quadro scendono
+da 536 a 257.
+
+Il cambiamento non e' cosmetico e va detto per intero, perche' **tocca la
+conclusione di questa voce**. Sulla popolazione ripulita la quota di fermate
+anomale dentro la corsa risale al **96,7%**, contro il 54,5% misurato sulla
+popolazione contaminata. Il 25% che aveva motivato la lettura "non sono corse
+spostate per intero" era dunque abbassato dalle righe di salto di giorno
+mescolate dentro, e la lettura originale sui dati parziali - corse traslate in
+blocco - risulta piu' vicina al vero di quanto questa voce affermasse. Le altre
+quattro grandezze, contiguita', concentrazione, posizione e gradino, non sono
+ancora state ricalcolate sul criterio nuovo.
+
+La decisione di non scartare queste righe non cambia, perche' non dipende dalla
+forma del fenomeno ma dal fatto che descrivano la coda della distribuzione. Cambia
+invece la descrizione della forma, che va riscritta quando la diagnosi sara' stata
+rieseguita. Fino ad allora i numeri della tabella non vanno riportati nel
+documento.
+
 **Come si potrebbe verificare.** Il quadro 1 di
 `scripts/diagnosi_consolidamento.py` riporta, accanto al conteggio dei salti di
 giorno, quante righe sarebbero sfuggite al criterio stretto: su dati costruiti
-apposta sono la meta'. Il quadro 1-quinquies misura le quattro grandezze della
+apposta sono la meta', e sul 28 agosto sono state 33.683. Il quadro 1-quinquies misura le quattro grandezze della
 tabella, ed e' collaudato su venti corse a struttura nota, dieci con tratto
 contiguo e dieci con fermate sparse, di cui ritrova esattamente la composizione.

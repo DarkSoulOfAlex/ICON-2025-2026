@@ -301,6 +301,20 @@ class Riepilogo:
     passaggi_distinti: int
     mb_grezzi: float
     mb_parquet: float
+    soppresse_dalla_data: int = 0
+    """Righe che la chiave senza data avrebbe scartato, e che ora si conservano."""
+    duplicate_dalla_data: int = 0
+    """Righe che la chiave senza data avrebbe scritto in piu', e che ora si scartano.
+
+    Le due direzioni vanno contate separate perche' si compensano, ed e' la
+    ragione per cui il conteggio totale delle righe non dice se la correzione
+    abbia funzionato. Alternando fra due giorni di servizio, la chiave senza data
+    vede un valore diverso a ogni passaggio e registra un cambio che non c'e':
+    scrive righe in piu'. Nel caso opposto, piu' raro, sopprime un passaggio vero
+    perche' il valore coincide con quello dell'altro giorno. Il conteggio delle
+    coppie con piu' date **non misura nulla di tutto questo**: quelle coppie
+    devono esistere, dato che la stessa corsa ricorre in giorni diversi.
+    """
 
     @property
     def compressione(self) -> float:
@@ -338,6 +352,14 @@ def consolida_giorno(
     # CAMBI: la memoria resta proporzionale ai passaggi, non alle osservazioni.
     ultimo_valore: dict[tuple[str, str, int], int | None] = {}
     ultima_riga: dict[tuple[str, str, int], list] = {}
+    # Stato ombra con la chiave storica, senza data di servizio, tenuto solo per
+    # contare quante righe quella chiave avrebbe scartato. Non influenza cio' che
+    # viene scritto: e' la misura dell'effetto della correzione, e senza di essa
+    # l'unico numero disponibile sarebbe quello delle coppie con piu' date, che
+    # misura una cosa diversa e fa sembrare il difetto piu' grande di quanto sia.
+    ultimo_valore_storico: dict[tuple[str, int], int | None] = {}
+    soppresse_dalla_data = [0]
+    duplicate_dalla_data = [0]
     # Contatore in una lista per poterlo aggiornare dentro il ciclo senza nonlocal.
     divergenze = [0]
 
@@ -367,12 +389,20 @@ def consolida_giorno(
                     )
                 programmato, linea_di = orari[osservazione.service_date]
 
-                # La data di servizio fa parte della chiave, e non e' un dettaglio:
-                # attorno alla mezzanotte una cartella contiene due giorni di
-                # servizio, e senza di essa due passaggi distinti della stessa
-                # corsa condividono lo stesso posto. Il secondo verrebbe scartato
-                # come valore invariato. Misurato sul 28 agosto: 9.606 coppie
-                # coinvolte su Roma e quasi 194.000 righe, il 2% del file.
+                # La data di servizio fa parte della chiave: attorno alla
+                # mezzanotte una cartella contiene due giorni di servizio, e senza
+                # di essa due passaggi distinti della stessa corsa condividono lo
+                # stesso posto nello stato della deduplica.
+                #
+                # L'effetto pero' NON e' quello che il conteggio delle coppie
+                # lascerebbe credere. La deduplica scarta solo quando il valore
+                # osservato coincide, e due passaggi a ventiquattro ore di
+                # distanza hanno orari diversi: la soppressione a torto e' quindi
+                # rara. Il caso frequente e' l'opposto, cioe' righe scritte in
+                # piu' perche' l'alternanza fra i due giorni sembra un cambio.
+                # Le due direzioni si compensano, ed e' la ragione per cui il
+                # conteggio totale delle righe non dice se la correzione abbia
+                # funzionato: si contano separate in ``Riepilogo``.
                 # Due chiavi distinte, e confonderle e' un errore che non si vede:
                 # l'orario statico e' indicizzato per (corsa, posizione), perche'
                 # e' gia' relativo a una data di servizio; la deduplica ha invece
@@ -437,7 +467,15 @@ def consolida_giorno(
                     ultima_riga[chiave] = riga
                     continue
                 if ultimo_valore.get(chiave) == osservato:
+                    # Si scarta. La chiave storica l'avrebbe invece scritta?
+                    if ultimo_valore_storico.get(chiave_orario) != osservato:
+                        duplicate_dalla_data[0] += 1
+                    ultimo_valore_storico[chiave_orario] = osservato
                     continue
+                # La riga si conserva. La chiave storica l'avrebbe scartata?
+                if ultimo_valore_storico.get(chiave_orario) == osservato:
+                    soppresse_dalla_data[0] += 1
+                ultimo_valore_storico[chiave_orario] = osservato
                 ultimo_valore[chiave] = osservato
                 accumulate.append(riga)
                 if len(accumulate) >= RIGHE_PER_GRUPPO:
@@ -469,6 +507,8 @@ def consolida_giorno(
         passaggi_distinti=passaggi,
         mb_grezzi=mb_grezzi,
         mb_parquet=mb_parquet,
+        soppresse_dalla_data=soppresse_dalla_data[0],
+        duplicate_dalla_data=duplicate_dalla_data[0],
     )
 
 
@@ -592,6 +632,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             log.info(
                 "[%s] grezzi %.1f MB -> parquet %.1f MB (%.1f%%)",
                 citta, riepilogo.mb_grezzi, riepilogo.mb_parquet, riepilogo.compressione * 100,
+            )
+            log.info(
+                "[%s] effetto della data nella chiave: %s righe conservate che la chiave "
+                "storica avrebbe scartato, %s scartate che avrebbe scritto in piu'",
+                citta, f"{riepilogo.soppresse_dalla_data:,}",
+                f"{riepilogo.duplicate_dalla_data:,}",
             )
             if not argomenti.senza_archivio:
                 archivio = archivia_grezzi(citta, giorno, RADICE)

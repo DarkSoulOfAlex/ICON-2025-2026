@@ -1827,8 +1827,25 @@ dizionario e due contatori, e li riporta il riepilogo di `consolida_giorno`. Se
 fosse stata scritta prima della correzione, avrebbe detto subito che il difetto
 valeva quattro righe, e le priorita' sarebbero state altre.
 
+**Lo stesso errore e' ricomparso due giorni dopo, il che rende questo punto meno
+teorico di come suona.** I due contatori appena descritti restavano a **zero**
+sotto la politica di deduplica `ultimo`, perche' quel ramo esce prima di
+aggiornare lo stato ombra. Uno zero che significa "non misurato" sarebbe stato
+letto come "nessun effetto": esattamente la confusione fra due grandezze diverse
+che questa voce documenta, ricomparsa nello stesso codice scritto per porvi
+rimedio. E il caso era per giunta quello in cui il difetto della chiave e' piu'
+grave, perche' sotto `ultimo` si conserva una riga per chiave e la chiave senza
+data ne terrebbe una sola per due giorni di servizio, perdendo un passaggio
+intero invece di una ripetizione.
+
+La lezione da trarne non e' che serva piu' attenzione, ma che **un contatore deve
+distinguere lo zero misurato dallo zero non misurato**, perche' chi lo legge non
+puo' vedere la differenza. Dove i due casi esistono, o si misura anche il secondo
+o lo si dichiara.
+
 **Come si potrebbe verificare.** I due contatori del riepilogo, su qualunque
-giorno. I test `test_si_misura_l_effetto_della_data_nella_chiave` e
-`test_la_soppressione_a_torto_si_conta_nell_altra_direzione` costruiscono i due
-casi separatamente e verificano che ciascun contatore risponda al proprio e non
-all'altro.
+giorno. I test `test_si_misura_l_effetto_della_data_nella_chiave`,
+`test_la_soppressione_a_torto_si_conta_nell_altra_direzione` e
+`test_sotto_la_politica_ultimo_la_data_nella_chiave_salva_un_passaggio`
+costruiscono i casi separatamente e verificano che ciascun contatore risponda al
+proprio e non all'altro, sotto entrambe le politiche.

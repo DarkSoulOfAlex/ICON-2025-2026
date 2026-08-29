@@ -171,7 +171,14 @@ giorno, posizione lungo la corsa e ritardo a valle, e sostituisce con una
 distribuzione condizionata appresa il parametro di correlazione 0,7 inventato in
 Fase 4. Copre il cap. 9 con il formalismo che gli e' proprio, oggi assente.
 
-- [ ] **Per primo:** test della proprieta' markoviana, cioe' se il ritardo due
+**Stato incoerente noto, da sanare con la rigenerazione.** I parquet sulla VM
+hanno due schemi diversi: il 27 e il 28 agosto sono stati rigenerati con le due
+colonne di provenienza, gli altri giorni no. Leggerli tutti insieme fallisce, o
+peggio riesce ignorando le colonne mancanti. La rigenerazione completa dei sedici
+giorni li riallinea, e va fatta **prima** di qualunque lettura d'insieme.
+
+- [ ] Rigenerare tutti i giorni con lo schema nuovo (circa 1h 40m, misurato)
+- [ ] **Per primo, dopo la rigenerazione:** test della proprieta' markoviana, cioe' se il ritardo due
       fermate a monte aggiunga informazione dato quello a una fermata a monte. Se
       non fosse prossima a zero cambierebbe la struttura della rete, e non va
       scoperto dopo aver stimato le tabelle di probabilita'
@@ -275,6 +282,14 @@ transizione di fase, budget del cammino stretto.
 - [ ] Risultati grezzi in `results/` come CSV
 - [ ] `src/eval/report.py`: tabelle con media e deviazione standard per ogni
       combinazione, piu' i grafici. Nessun output per singolo run
+
+**Da rivedere alla chiusura di questa fase.** L'Argomento 3 del documento descrive
+il pianificatore senza menzionare che su Roma il tempo reale copre soltanto la
+rete di superficie. Oggi e' corretto cosi', perche' quell'argomento e' valutato su
+ritardi sintetici, che coprono anche la metropolitana. Diventera' falso nel
+momento in cui la Fase 5 girera' sui dati reali: da li' in avanti ogni
+affermazione sul pianificatore romano vale per i soli autobus, e la sezione va
+allineata a quanto gia' dichiarato nelle Conclusioni.
 
 ---
 

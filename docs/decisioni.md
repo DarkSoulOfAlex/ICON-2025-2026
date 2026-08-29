@@ -1657,3 +1657,76 @@ persuasivo, e lo era per entrambi gli autori di questa voce. Ma prima di leggerl
 come causale va chiesto se la finestra di misura permetta alle due variabili di
 variare separatamente: qui non lo permetteva, e nessuna quantita' di dati raccolti
 in quella finestra avrebbe potuto rivelarlo.
+
+---
+
+### 57. Le corse con ritardo enorme non si scartano: sono la coda che serve
+
+**Decisione.** Le righe con ritardo superiore all'ora, una volta separate dai
+salti di giorno, restano nel dataset e non vengono filtrate.
+
+**Che cosa sembravano sui dati parziali.** Sulla giornata di sviluppo il fenomeno
+riguardava sedici corse, il 77% delle cui righe era anomalo, concentrate in due
+ore. Il profilo era quello di **corse spostate per intero**: ritardo pressoche'
+costante lungo tutto il percorso, deviazione standard interna di 223 s contro una
+media di 5.017. La lettura proposta era che si trattasse di corse traslate in
+blocco, forse per un'etichetta sbagliata.
+
+**Che cosa sono risultate sui dati completi.** Su due giornate intere di Roma, 532
+e 536 corse, la quota di righe anomale dentro le corse colpite scende al **25%**,
+e le ore di emissione sono tutte e ventiquattro. Non sono quindi corse traslate:
+sono corse con **alcune** fermate anomale e altre normali. La lettura precedente
+non regge, ed e' il secondo caso in cui il campione parziale ha suggerito una
+struttura che sui dati completi non esiste.
+
+**Le quattro misure che stabiliscono la forma vera.**
+
+| | 27 ago | 28 ago |
+| --- | ---: | ---: |
+| Corse esaminate | 532 | 536 |
+| Con un solo tratto anomalo contiguo | 81,6% | 86,4% |
+| Concentrazione sul ritardo piu' frequente | 10,6% | 7,7% |
+| Posizione del primo tratto (0 = inizio) | 0,14 | 0,02 |
+| Ritardo, fermate anomale contro normali | 4.510 / -394 s | 3.680 / -438 s |
+
+Lette insieme convergono su una sola spiegazione. Le fermate anomale sono
+**contigue** in oltre l'ottanta per cento delle corse, il che esclude il difetto
+di trasmissione: nessun fenomeno fisico salta avanti e indietro fra fermate
+vicine, ma un guasto o un blocco sono per forza localizzati. I ritardi sono
+**sparsi e non ricorrenti** - la concentrazione massima e' fra il 7 e l'11%,
+contro il 4% che darebbe una distribuzione uniforme e contro il picco netto che
+darebbe un'etichetta sbagliata - quindi non c'e' un valore che si ripete. Il
+tratto anomalo comincia **all'inizio del percorso**, quindi la corsa parte gia' in
+ritardo e semmai rientra, invece di accumulare strada facendo. E lo scarto con le
+fermate normali della **stessa** corsa e' un gradino netto, non una degradazione
+graduale.
+
+Il profilo e' quello di corse realmente partite con un'ora abbondante di ritardo.
+Non e' un artefatto del consolidamento.
+
+**Perche' non si scartano.** Sono osservazioni valide, e per l'apprendimento del
+modello dei ritardi sono **le piu' informative che abbiamo**: descrivono la coda
+della distribuzione, cioe' esattamente la situazione in cui un pianificatore
+robusto ha una ragione di esistere. Un modello addestrato senza di esse
+imparerebbe un mondo in cui il ritardo grave non accade, e assegnerebbe a ogni
+itinerario una probabilita' di arrivo sistematicamente ottimistica proprio nei
+casi che il progetto vuole distinguere. Scartare la coda per ottenere una
+distribuzione piu' ordinata significherebbe togliere dal campione il fenomeno che
+si sta studiando.
+
+**Il criterio che separa i due fenomeni, e perche' il primo era sbagliato.** La
+prima versione classificava come salto di giorno le righe entro dieci minuti da
++/- 86.400 s. E' un criterio che fallisce sul caso piu' frequente: un salto di
+giorno **piu' un ritardo reale di quaranta minuti** vale -84.000 s, cade fuori
+dalla finestra e finiva contato fra le anomalie di altra natura, mescolando i due
+fenomeni. Il criterio corretto non guarda la distanza dal valore tondo ma il
+**residuo**: si tolgono ventiquattro ore e si verifica che cio' che resta sia un
+ritardo plausibile, sotto l'ora. Non cattura nulla di spurio, perche' l'unico caso
+che verrebbe scambiato sarebbe un ritardo autentico di ventitre ore.
+
+**Come si potrebbe verificare.** Il quadro 1 di
+`scripts/diagnosi_consolidamento.py` riporta, accanto al conteggio dei salti di
+giorno, quante righe sarebbero sfuggite al criterio stretto: su dati costruiti
+apposta sono la meta'. Il quadro 1-quinquies misura le quattro grandezze della
+tabella, ed e' collaudato su venti corse a struttura nota, dieci con tratto
+contiguo e dieci con fermate sparse, di cui ritrova esattamente la composizione.

@@ -71,6 +71,18 @@ FUSO = ZoneInfo("Europe/Rome")
 GIORNO = 86_400
 SOGLIA_CONFRONTO_MODI = 3_000
 SOGLIA_TEST_TURNI = 200
+RESIDUO_PLAUSIBILE = 3_600
+"""Scarto massimo, tolte 24 ore, perche' un ritardo sia un salto di giorno.
+
+Il criterio precedente era la distanza da +/- 86.400 entro dieci minuti, ed era
+sbagliato: un salto di giorno **piu' un ritardo reale di quaranta minuti** vale
+-84.000 s, cade fuori da quella finestra e finiva contato fra le anomalie di
+altra natura, mescolando due fenomeni distinti. La regola giusta non guarda la
+distanza dal valore tondo ma il **residuo**: si tolgono ventiquattro ore e si
+guarda se cio' che resta sia un ritardo plausibile. Un'ora di residuo copre i
+ritardi reali senza catturare nient'altro, perche' un ritardo autentico di
+ventitre ore - il solo che verrebbe scambiato - non esiste.
+"""
 """Righe minime sulle corse successive perche' il test dei turni decida qualcosa.
 
 Sul 28 agosto quel test ha dato "40% delle corse successive in ritardo oltre
@@ -99,6 +111,20 @@ FASCE_ANTICIPO = (
     (1800, 3600, "30-60 min"),
     (3600, 10**9, "oltre 60 min"),
 )
+
+
+def maschera_rollover(ritardo: pd.Series) -> pd.Series:
+    """Righe il cui ritardo e' un salto di giorno, eventualmente con un ritardo vero sopra.
+
+    Si toglie una giornata intera, nell'uno e nell'altro verso, e si guarda cosa
+    resta: se il residuo e' un ritardo plausibile, la riga e' un salto di giorno.
+    Guardare invece la distanza dal valore tondo di 86.400 lascerebbe fuori
+    proprio i casi piu' frequenti, quelli in cui il mezzo era anche realmente in
+    ritardo, e li mescolerebbe con anomalie di natura diversa.
+    """
+    return ((ritardo + GIORNO).abs() <= RESIDUO_PLAUSIBILE) | (
+        (ritardo - GIORNO).abs() <= RESIDUO_PLAUSIBILE
+    )
 
 
 def _mediana(valori: Sequence[float]) -> str:
@@ -130,12 +156,15 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
 
     # ---- 1. Rollover
     print(f"\n    --- 1. Salto di giorno contro previsione stantia ---")
-    vicino = d[((r + GIORNO).abs() <= 600) | ((r - GIORNO).abs() <= 600)]
+    vicino = d[maschera_rollover(r)]
     grandi = d[r.abs() > 3600]
     print(f"    |ritardo| > 1 h                : {len(grandi):>9,} ({len(grandi)/len(d):.3%}) "
           f"su {grandi.trip_id.nunique():,} corse")
-    print(f"    entro 10 min da +/- 24 h       : {len(vicino):>9,} ({len(vicino)/len(d):.3%}) "
+    stretto = d[((r + GIORNO).abs() <= 600) | ((r - GIORNO).abs() <= 600)]
+    print(f"    salti di giorno (residuo < 1 h) : {len(vicino):>9,} ({len(vicino)/len(d):.3%}) "
           f"su {vicino.trip_id.nunique():,} corse")
+    print(f"      di cui entro 10 min da 24 h   : {len(stretto):>9,} "
+          f"-> {len(vicino) - len(stretto):,} righe sarebbero sfuggite al criterio stretto")
     if len(grandi):
         conc = grandi.trip_id.value_counts()
         print(f"    concentrazione: le prime 10 corse fanno "
@@ -279,8 +308,7 @@ def quadro_corse_spostate(d: pd.DataFrame, citta: str, date_servizio: Sequence[s
     print()
     print("    --- 1-ter. Ritardi enormi che NON sono salti di giorno ---")
     r = d.ritardo_secondi
-    lontane = ((r + GIORNO).abs() <= 600) | ((r - GIORNO).abs() <= 600)
-    grandi = d[(r.abs() > 3600) & ~lontane]
+    grandi = d[(r.abs() > 3600) & ~maschera_rollover(r)]
     if grandi.empty:
         print("    nessuna")
         quadro_blocchi(d, grandi, citta, date_servizio, cartella_gtfs)

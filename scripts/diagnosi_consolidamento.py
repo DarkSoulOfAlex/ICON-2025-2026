@@ -70,6 +70,15 @@ CITTA = ("roma", "torino")
 FUSO = ZoneInfo("Europe/Rome")
 GIORNO = 86_400
 SOGLIA_CONFRONTO_MODI = 3_000
+SOGLIA_TEST_TURNI = 200
+"""Righe minime sulle corse successive perche' il test dei turni decida qualcosa.
+
+Sul 28 agosto quel test ha dato "40% delle corse successive in ritardo oltre
+l'ora" su **due** corse spostate, una sola osservata e quindici righe. Un numero
+del genere non e' un indizio debole, e' rumore con una percentuale davanti, e
+stampato accanto agli altri sembrerebbe dello stesso rango. Sotto la soglia si
+dichiara l'indecidibilita' invece del valore.
+"""
 """Righe minime per modo, su fermate condivise, perche' il confronto sia un risultato.
 
 Sotto questa soglia una mediana e' un'indicazione e non una stima, e riportarla
@@ -303,7 +312,98 @@ def quadro_corse_spostate(d: pd.DataFrame, citta: str, date_servizio: Sequence[s
     ore = pd.to_datetime(grandi.timestamp_feed, unit="s", utc=True).dt.tz_convert(FUSO).dt.hour
     print(f"    ore di emissione: {dict(sorted(Counter(ore).items()))}")
 
+    quadro_forma_anomalie(d, grandi)
     quadro_blocchi(d, grandi, citta, date_servizio, cartella_gtfs)
+
+
+def quadro_forma_anomalie(d: pd.DataFrame, grandi: pd.DataFrame) -> None:
+    """Come sono disposte, dentro una corsa, le fermate con ritardo anomalo.
+
+    Sui dati di sviluppo il fenomeno appariva come corse spostate per intero: il
+    77% delle righe delle corse colpite era anomalo. Sui dati completi la quota
+    scende al 25%, quindi le corse hanno **alcune** fermate anomale e altre
+    normali, e la lettura precedente non regge. Questo quadro misura la forma
+    nuova, che e' diversa dalla precedente e va accertata invece che supposta.
+
+    Due domande, e ciascuna distingue due spiegazioni diverse.
+
+    *Le fermate anomale sono contigue o sparse?* Un tratto contiguo indica un
+    evento localizzato nel percorso - un blocco, una deviazione, un mezzo fermo
+    per un tratto - dopo il quale la corsa recupera o viene ripresa. Fermate
+    sparse lungo tutto il percorso indicano invece un difetto di trasmissione,
+    perche' nessun fenomeno fisico salta avanti e indietro fra fermate vicine.
+
+    *Il ritardo anomalo ricorre attorno a valori precisi?* Valori ricorrenti,
+    specie se prossimi all'intervallo fra due corse successive della stessa
+    linea, indicano che il feed sta descrivendo un veicolo diverso da quello che
+    l'identificativo dichiara. Valori sparsi indicano ritardi reali.
+    """
+    print()
+    print("    --- 1-quinquies. Forma delle anomalie dentro la corsa ---")
+    if grandi.empty:
+        print("    nessuna anomalia da esaminare")
+        return
+
+    coinvolte = set(grandi.trip_id.unique())
+    tutte = d[d.trip_id.isin(coinvolte)]
+    anomale = set(zip(grandi.trip_id, grandi.stop_sequence))
+
+    tratti, quote, posizioni, lunghezze = [], [], [], []
+    for trip, gruppo in tutte.groupby("trip_id"):
+        sequenze = sorted(gruppo.stop_sequence.unique())
+        if len(sequenze) < 2:
+            continue
+        # Il rango dentro la corsa, non il valore assoluto: stop_sequence puo'
+        # saltare numeri, e due fermate consecutive nel percorso possono avere
+        # sequenze non consecutive.
+        rango = {s: i for i, s in enumerate(sequenze)}
+        marcate = sorted(rango[s] for s in sequenze if (trip, s) in anomale)
+        if not marcate:
+            continue
+        blocchi = 1 + sum(1 for a, b in zip(marcate, marcate[1:]) if b - a > 1)
+        tratti.append(blocchi)
+        quote.append(len(marcate) / len(sequenze))
+        posizioni.append(marcate[0] / max(1, len(sequenze) - 1))
+        lunghezze.append(len(sequenze))
+
+    if not tratti:
+        print("    nessuna corsa con abbastanza fermate per misurare la forma")
+        return
+
+    tratti_a = np.array(tratti)
+    print(f"    corse esaminate: {len(tratti_a):,} (mediana {np.median(lunghezze):.0f} fermate)")
+    print(f"    quota di fermate anomale dentro la corsa: mediana {np.median(quote):.1%}")
+    print(f"    tratti anomali separati per corsa: mediana {np.median(tratti_a):.0f}, "
+          f"media {tratti_a.mean():.1f}, massimo {tratti_a.max()}")
+    contigue = (tratti_a == 1).mean()
+    print(f"    corse con un SOLO tratto contiguo: {contigue:.1%}")
+    print(f"    (alta = evento localizzato nel percorso; bassa = fermate sparse,")
+    print(f"     che nessun fenomeno fisico produce)")
+    print(f"    posizione del primo tratto anomalo lungo la corsa: mediana "
+          f"{np.median(posizioni):.2f} (0 = inizio, 1 = fine)")
+
+    # Il salto: le fermate normali della stessa corsa che ritardo hanno?
+    normali = tutte[~pd.Series(list(zip(tutte.trip_id, tutte.stop_sequence)),
+                               index=tutte.index).isin(anomale)]
+    if not normali.empty:
+        print(f"    dentro le stesse corse: fermate anomale mediana "
+              f"{grandi.ritardo_secondi.median():>8.0f} s, "
+              f"fermate normali mediana {normali.ritardo_secondi.median():>7.0f} s "
+              f"({len(normali):,} righe)")
+        print(f"    (uno scarto netto indica un salto, non una degradazione graduale)")
+
+    # Valori ricorrenti: se il ritardo anomalo si addensa attorno a pochi valori,
+    # non e' un ritardo ma un'etichetta sbagliata.
+    print()
+    arrotondati = (grandi.ritardo_secondi / 300).round().astype("Int64") * 5
+    conteggi = arrotondati.value_counts().head(8)
+    print(f"    ritardi anomali piu' ricorrenti (arrotondati a 5 minuti):")
+    for valore, quante in conteggi.items():
+        print(f"      {int(valore):>6} min : {quante:>8,} righe ({quante/len(grandi):.1%})")
+    prima = conteggi.iloc[0] / len(grandi) if len(conteggi) else 0.0
+    print(f"    concentrazione sul valore piu' frequente: {prima:.1%}")
+    print(f"    (alta = valore ricorrente, quindi verosimilmente un'etichetta")
+    print(f"     sbagliata; bassa = ritardi sparsi, quindi verosimilmente reali)")
 
 
 def quadro_blocchi(d: pd.DataFrame, grandi: pd.DataFrame, citta: str,
@@ -400,6 +500,12 @@ def quadro_blocchi(d: pd.DataFrame, grandi: pd.DataFrame, citta: str,
           f"({len(osservate):,} righe)")
     if osservate.empty:
         print("    nessuna di esse compare nel feed: domanda indecidibile")
+        return
+    if len(osservate) < SOGLIA_TEST_TURNI or osservate.trip_id.nunique() < 5:
+        print(f"    base insufficiente: {osservate.trip_id.nunique()} corse osservate e "
+              f"{len(osservate):,} righe, sotto la soglia di {SOGLIA_TEST_TURNI}.")
+        print(f"    La domanda NON e' decidibile con questi dati, e la percentuale")
+        print(f"    non viene riportata per non darle il rango di un indizio.")
         return
     print(f"    ritardo delle corse successive : mediana "
           f"{osservate.ritardo_secondi.median():>8.0f} s")

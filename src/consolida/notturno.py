@@ -240,9 +240,14 @@ def carica_orario(citta: str, service_date: str, cartella_gtfs: Path) -> tuple[d
     assert archivio.stop_times is not None
 
     # Si costruisce prima la mappa piccola, poi si lascia andare tutto cio' che
-    # non serve piu': l'indice degli orari di Roma occupa 1,63 GB e il DataFrame
-    # da cui nasce altrettanto, quindi tenerli vivi insieme porta il picco a 2,16
-    # GB per nulla. Rilasciare qui non cambia il risultato e dimezza il picco.
+    # non serve piu'. **Il picco non ne beneficia**, ed e' stato misurato: su Roma
+    # resta di 2,16 GB contro 1,63 GB di residenti, identico a prima del
+    # rilascio. La ragione e' che il picco non cade dove sembrava, cioe' nella
+    # costruzione dell'indice, ma nel caricamento dell'archivio: interpretare 5,5
+    # milioni di righe di CSV ha un transitorio piu' alto di quello del
+    # dizionario che ne nasce. Il rilascio resta perche' evita comunque di tenere
+    # vive due strutture grandi insieme, ma chi cercasse qui un guadagno di
+    # memoria cercherebbe nel posto sbagliato: andrebbe cercato nella lettura.
     linea_di = {
         str(t): str(r) for t, r in archivio.trips[["trip_id", "route_id"]].itertuples(index=False)
     }

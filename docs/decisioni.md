@@ -1754,3 +1754,76 @@ giorno, quante righe sarebbero sfuggite al criterio stretto: su dati costruiti
 apposta sono la meta', e sul 28 agosto sono state 33.683. Il quadro 1-quinquies misura le quattro grandezze della
 tabella, ed e' collaudato su venti corse a struttura nota, dieci con tratto
 contiguo e dieci con fermate sparse, di cui ritrova esattamente la composizione.
+
+---
+
+### 58. La chiave di deduplica: difetto reale, effetto nullo, e una misura scelta male
+
+**Decisione.** La chiave della deduplica include la data di servizio. La
+correzione si tiene, ma il suo effetto misurato e' **nullo**, e questa voce esiste
+per la seconda meta' di quella frase piu' che per la prima.
+
+**La collisione esisteva davvero.** Attorno alla mezzanotte una cartella contiene
+due giorni di servizio, perche' le corse notturne del giorno precedente sono
+ancora in circolazione e riportano la propria `start_date`. Con una chiave fatta
+di sola corsa e posizione, due passaggi distinti condividono lo stesso posto nello
+stato della deduplica. Sul 28 agosto le coppie coinvolte su Roma erano **9.606**.
+Non e' un fenomeno immaginato.
+
+**L'effetto sulle righe era nullo.** Misurato dopo la correzione, su una giornata
+intera:
+
+| | righe conservate che la chiave storica avrebbe scartato | righe scartate che avrebbe scritto in piu' | su un totale di |
+| --- | ---: | ---: | ---: |
+| Roma | 4 | 0 | 9.569.851 |
+| Torino | 0 | 0 | 1.516.786 |
+
+Quattro righe su nove milioni e mezzo. La ragione e' nel meccanismo: la deduplica
+scarta una riga solo quando il valore osservato **coincide** con il precedente, e
+due passaggi a ventiquattro ore di distanza hanno orari che differiscono di 86.400
+secondi. La soppressione a torto richiede una coincidenza che non si verifica.
+
+**Il numero che avevo usato come prova non misurava cio' che credevo.** Le 9.606
+coppie erano state tradotte in "quasi 194.000 righe coinvolte, il 2% del file", e
+quel 2% era stato annunciato come il piu' grosso dei tre difetti trovati dalla
+diagnosi. Ma **righe appartenenti a coppie in collisione** e **righe perse** sono
+grandezze diverse: la prima conta tutte le osservazioni di ogni coppia che
+compaia in due giorni, la seconda solo quelle che la deduplica ha effettivamente
+scartato a torto. Averle scambiate ha fatto sembrare dominante un difetto
+marginale, e ha determinato l'ordine di lavoro delle correzioni successive.
+
+C'e' anche una direzione opposta che era sfuggita del tutto. Alternando fra i due
+giorni di servizio, la chiave senza data vede un valore diverso a ogni giro e
+registra un cambio che non c'e': scrive righe **in piu'**, non in meno. Le due
+direzioni si compensano.
+
+**Perche' la correzione si tiene comunque.** Una chiave che non distingue due
+passaggi distinti e' sbagliata a prescindere da quanto costi oggi. Il costo
+dipende da una circostanza contingente - che gli orari osservati dei due giorni
+non coincidano quasi mai - e non da una proprieta' del modello: basterebbe un feed
+che riporti l'orario in forma relativa, o una politica di deduplica diversa,
+perche' lo stesso difetto diventasse grave. Si corregge cio' che e' sbagliato, non
+cio' che al momento fa danno.
+
+**Il punto di metodo, che e' la ragione di questa voce.** La misura con cui si
+verifica una correzione va scelta **prima** di correggere. Scegliendola dopo si
+sceglie, senza accorgersene, quella che conferma cio' che si crede gia'.
+
+Qui la misura usata come prova e' stata il conteggio totale delle righe del
+parquet, prima e dopo. Quel numero non poteva dire nulla, e non per sfortuna ma
+per costruzione: le due direzioni dell'errore si compensano, quindi il totale
+resta fermo sia se la correzione non fa nulla sia se fa molto in entrambi i versi.
+E' un numero che non distingue le ipotesi che dovrebbe distinguere.
+
+La misura giusta esisteva ed era semplice: contare, durante il consolidamento,
+quante righe la chiave storica avrebbe scartato e quante ne avrebbe scritte in
+piu', tenendo uno stato ombra che non influenza cio' che viene scritto. Costa un
+dizionario e due contatori, e li riporta il riepilogo di `consolida_giorno`. Se
+fosse stata scritta prima della correzione, avrebbe detto subito che il difetto
+valeva quattro righe, e le priorita' sarebbero state altre.
+
+**Come si potrebbe verificare.** I due contatori del riepilogo, su qualunque
+giorno. I test `test_si_misura_l_effetto_della_data_nella_chiave` e
+`test_la_soppressione_a_torto_si_conta_nell_altra_direzione` costruiscono i due
+casi separatamente e verificano che ciascun contatore risponda al proprio e non
+all'altro.

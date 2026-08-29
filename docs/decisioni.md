@@ -1660,49 +1660,79 @@ in quella finestra avrebbe potuto rivelarlo.
 
 ---
 
-### 57. Le corse con ritardo enorme non si scartano: sono la coda che serve
+### 57. Le corse con ritardo enorme sono spostate in blocco, e non si scartano
 
 **Decisione.** Le righe con ritardo superiore all'ora, una volta separate dai
 salti di giorno, restano nel dataset e non vengono filtrate.
 
-**Che cosa sembravano sui dati parziali.** Sulla giornata di sviluppo il fenomeno
-riguardava sedici corse, il 77% delle cui righe era anomalo, concentrate in due
-ore. Il profilo era quello di **corse spostate per intero**: ritardo pressoche'
-costante lungo tutto il percorso, deviazione standard interna di 223 s contro una
-media di 5.017. La lettura proposta era che si trattasse di corse traslate in
-blocco, forse per un'etichetta sbagliata.
+**La lettura e' cambiata due volte, e il secondo cambiamento era un errore.** Vale
+la pena riportare i tre passaggi nell'ordine in cui sono avvenuti, perche' il
+percorso dice piu' della conclusione.
 
-**Che cosa sono risultate sui dati completi.** Su due giornate intere di Roma, 532
-e 536 corse, la quota di righe anomale dentro le corse colpite scende al **25%**,
-e le ore di emissione sono tutte e ventiquattro. Non sono quindi corse traslate:
-sono corse con **alcune** fermate anomale e altre normali. La lettura precedente
-non regge, ed e' il secondo caso in cui il campione parziale ha suggerito una
-struttura che sui dati completi non esiste.
+*Sui dati parziali sembravano corse spostate in blocco.* Sedici corse di una
+giornata incompleta, con il 77% delle righe anomalo e una deviazione standard
+interna di 223 s contro una media di 5.017: il ritardo era pressoche' costante
+lungo tutto il percorso.
 
-**Le quattro misure che stabiliscono la forma vera.**
+*Sui dati completi sembravano il contrario.* Su due giornate intere la quota di
+righe anomale dentro le corse colpite scendeva al 25%, e le corse erano 532 e 536.
+Se ne era concluso che non fossero corse traslate ma corse con alcune fermate
+anomale e altre normali, e che il campione parziale avesse suggerito una struttura
+inesistente.
+
+*Sui dati completi e correttamente classificati sono di nuovo corse spostate in
+blocco.* Quella seconda lettura era viziata: il criterio che separava i salti di
+giorno dal resto riconosceva come tali solo le righe entro dieci minuti da 86.400
+s, e lasciava quindi **33.683 righe di rollover** dentro la popolazione da
+descrivere, abbassandone la quota di anomalie. Con il criterio del residuo il
+quadro si rovescia.
 
 | | 27 ago | 28 ago |
 | --- | ---: | ---: |
-| Corse esaminate | 532 | 536 |
-| Con un solo tratto anomalo contiguo | 81,6% | 86,4% |
-| Concentrazione sul ritardo piu' frequente | 10,6% | 7,7% |
-| Posizione del primo tratto (0 = inizio) | 0,14 | 0,02 |
-| Ritardo, fermate anomale contro normali | 4.510 / -394 s | 3.680 / -438 s |
+| Corse esaminate | 274 | 257 |
+| Quota di fermate anomale dentro la corsa | 78,4% | 96,7% |
+| Con un solo tratto anomalo contiguo | 94,5% | 93,8% |
+| Tratti separati per corsa (mediana / massimo) | 1 / 3 | 1 / 4 |
+| Posizione del primo tratto (0 = inizio) | 0,02 | 0,00 |
+| Ritardo, fermate anomale contro normali | 4.738 / 27 s | 4.419 / 32 s |
 
-Lette insieme convergono su una sola spiegazione. Le fermate anomale sono
-**contigue** in oltre l'ottanta per cento delle corse, il che esclude il difetto
-di trasmissione: nessun fenomeno fisico salta avanti e indietro fra fermate
-vicine, ma un guasto o un blocco sono per forza localizzati. I ritardi sono
-**sparsi e non ricorrenti** - la concentrazione massima e' fra il 7 e l'11%,
-contro il 4% che darebbe una distribuzione uniforme e contro il picco netto che
-darebbe un'etichetta sbagliata - quindi non c'e' un valore che si ripete. Il
-tratto anomalo comincia **all'inizio del percorso**, quindi la corsa parte gia' in
-ritardo e semmai rientra, invece di accumulare strada facendo. E lo scarto con le
-fermate normali della **stessa** corsa e' un gradino netto, non una degradazione
-graduale.
+Le misure convergono su una sola descrizione. Le fermate anomale sono
+**contigue** nel 94% delle corse, e formano un solo tratto: nessun difetto di
+trasmissione produce un blocco unico, mentre un evento fisico e' per forza
+localizzato. Il tratto comincia **all'inizio del percorso**, con mediana 0,00 e
+0,02, quindi la corsa parte gia' in ritardo invece di accumularlo strada facendo.
+E lo scarto con le fermate normali della **stessa** corsa e' un gradino, non una
+degradazione.
 
-Il profilo e' quello di corse realmente partite con un'ora abbondante di ritardo.
-Non e' un artefatto del consolidamento.
+**Il dettaglio che chiude la questione.** Le fermate normali di quelle corse hanno
+mediana **+27 e +32 secondi**, cioe' praticamente in orario, contro i -394 e -438
+misurati sulla popolazione contaminata. Sono corse che partono con un'ora
+abbondante di ritardo e poi **rientrano quasi esattamente in orario**. E' il
+profilo di un recupero, ed e' incompatibile sia con una degradazione progressiva
+sia con un difetto di misura, che non avrebbe ragione di sanarsi a meta' percorso.
+
+**I ritardi si addensano su una fascia, non su un valore.** La concentrazione sul
+valore piu' frequente e' del 12,3% e 12,8%, che non e' un picco: i primi cinque
+valori stanno tutti fra i 60 e gli 80 minuti e insieme fanno il 48% e il 59%. Non
+c'e' dunque il valore ricorrente che tradirebbe un'etichetta sbagliata, ma un
+addensamento attorno all'ora abbondante.
+
+**L'ipotesi alternativa e' stata verificata ed e' esclusa.** Se quell'ora
+corrispondesse all'intervallo fra due corse successive della stessa linea, la
+spiegazione naturale sarebbe che il feed descrive il veicolo successivo sotto
+l'identificativo del precedente. Misurato sull'orario statico di Roma, fra le 6 e
+le 21, l'intervallo mediano fra corse successive e' di **2 minuti**, sale a 5 al
+novantesimo percentile, e su 387 linee **nessuna** supera i 60 minuti di mediana.
+Le nove linee coinvolte nel campione locale hanno intervalli fra 0 e 4 minuti. Un
+addensamento fra 60 e 80 minuti e' quindi da quindici a quaranta volte
+l'intervallo tipico, e l'ipotesi non regge.
+
+Resta un'alternativa che questi dati non permettono di escludere: un'ora
+abbondante e' dell'ordine del tempo di **giro completo** di una linea urbana,
+quindi un veicolo in ritardo di un intero ciclo produrrebbe lo stesso profilo. Dal
+punto di vista di chi aspetta alla fermata le due cose coincidono - il mezzo
+arriva un'ora dopo - e la distinzione richiederebbe il ``block_id``, che su Roma
+non e' valorizzato. Si dichiara indecidibile.
 
 **Perche' non si scartano.** Sono osservazioni valide, e per l'apprendimento del
 modello dei ritardi sono **le piu' informative che abbiamo**: descrivono la coda
@@ -1710,52 +1740,27 @@ della distribuzione, cioe' esattamente la situazione in cui un pianificatore
 robusto ha una ragione di esistere. Un modello addestrato senza di esse
 imparerebbe un mondo in cui il ritardo grave non accade, e assegnerebbe a ogni
 itinerario una probabilita' di arrivo sistematicamente ottimistica proprio nei
-casi che il progetto vuole distinguere. Scartare la coda per ottenere una
-distribuzione piu' ordinata significherebbe togliere dal campione il fenomeno che
-si sta studiando.
+casi che il progetto vuole distinguere.
 
-**Il criterio che separa i due fenomeni, e perche' il primo era sbagliato.** La
-prima versione classificava come salto di giorno le righe entro dieci minuti da
-+/- 86.400 s. E' un criterio che fallisce sul caso piu' frequente: un salto di
-giorno **piu' un ritardo reale di quaranta minuti** vale -84.000 s, cade fuori
-dalla finestra e finiva contato fra le anomalie di altra natura, mescolando i due
-fenomeni. Il criterio corretto non guarda la distanza dal valore tondo ma il
-**residuo**: si tolgono ventiquattro ore e si verifica che cio' che resta sia un
-ritardo plausibile, sotto l'ora. Non cattura nulla di spurio, perche' l'unico caso
-che verrebbe scambiato sarebbe un ritardo autentico di ventitre ore.
+**Il punto di metodo, che non e' quello che sembrava.** La lettura intermedia
+sbagliata non veniva da un campione troppo piccolo: veniva da **dati completi
+classificati male**. Il campione parziale, con sedici corse su una giornata
+monca, aveva dato la risposta giusta; le due giornate intere, con la popolazione
+inquinata da trentatremila righe di rollover, l'avevano data sbagliata.
 
-**Avvertenza: la tabella qui sopra e' calcolata con il criterio superato, e va
-rifatta.** Le cinque righe vengono dalla classificazione stretta, quella che
-riconosceva come salto di giorno solo cio' che cadeva entro dieci minuti da
-86.400 s. Con il criterio del residuo, che e' quello corretto, molte righe si
-spostano dal terzo fenomeno ai salti di giorno: sul 28 agosto sono 49.280 contro
-le 15.597 della classificazione stretta, e le corse esaminate dal quadro scendono
-da 536 a 257.
+La morale non e' dunque "servono piu' dati" ma **"i dati vanno separati prima di
+essere descritti"**. Una descrizione statistica e' valida solo quanto la
+definizione della popolazione su cui e' calcolata, e un criterio di
+classificazione approssimativo non produce rumore: produce una struttura
+apparente, ordinata e persuasiva quanto quella vera. Qui il criterio sbagliato non
+ha reso i numeri incerti, li ha resi coerenti con una conclusione falsa.
 
-Il cambiamento non e' cosmetico e va detto per intero, perche' **tocca la
-conclusione di questa voce**. Sulla popolazione ripulita la quota di fermate
-anomale dentro la corsa risale al **96,7%**, contro il 54,5% misurato sulla
-popolazione contaminata. Il 25% che aveva motivato la lettura "non sono corse
-spostate per intero" era dunque abbassato dalle righe di salto di giorno
-mescolate dentro, e la lettura originale sui dati parziali - corse traslate in
-blocco - risulta piu' vicina al vero di quanto questa voce affermasse. Le altre
-quattro grandezze, contiguita', concentrazione, posizione e gradino, non sono
-ancora state ricalcolate sul criterio nuovo.
-
-La decisione di non scartare queste righe non cambia, perche' non dipende dalla
-forma del fenomeno ma dal fatto che descrivano la coda della distribuzione. Cambia
-invece la descrizione della forma, che va riscritta quando la diagnosi sara' stata
-rieseguita. Fino ad allora i numeri della tabella non vanno riportati nel
-documento.
-
-**Come si potrebbe verificare.** Il quadro 1 di
-`scripts/diagnosi_consolidamento.py` riporta, accanto al conteggio dei salti di
-giorno, quante righe sarebbero sfuggite al criterio stretto: su dati costruiti
-apposta sono la meta', e sul 28 agosto sono state 33.683. Il quadro 1-quinquies misura le quattro grandezze della
-tabella, ed e' collaudato su venti corse a struttura nota, dieci con tratto
-contiguo e dieci con fermate sparse, di cui ritrova esattamente la composizione.
-
----
+**Come si potrebbe verificare.** Il quadro 1-quinquies di
+`scripts/diagnosi_consolidamento.py` calcola le cinque grandezze della tabella, ed
+e' collaudato su venti corse a struttura nota, dieci con tratto contiguo e dieci
+con fermate sparse, di cui ritrova esattamente la composizione. Il quadro 1
+riporta quante righe sfuggirebbero al criterio stretto: sul 28 agosto sono 33.683.
+La misura sugli intervalli fra corse e' rifacibile dal solo orario statico.
 
 ### 58. La chiave di deduplica: difetto reale, effetto nullo, e una misura scelta male
 

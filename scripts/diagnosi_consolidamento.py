@@ -46,10 +46,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tarfile
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -68,6 +69,11 @@ from src.gtfs.loader import carica_archivio  # noqa: E402
 CITTA = ("roma", "torino")
 FUSO = ZoneInfo("Europe/Rome")
 GIORNO = 86_400
+
+TIPI_LINEA = {
+    0: "tram", 1: "metro", 2: "treno", 3: "bus", 4: "traghetto",
+    5: "funicolare", 6: "funivia", 7: "cremagliera", 11: "filobus", 12: "monorotaia",
+}
 
 FASCE_ANTICIPO = (
     (-10**9, 0, "gia' passato"),
@@ -95,8 +101,9 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
 
     d = pd.read_parquet(
         percorso,
-        columns=["service_date", "trip_id", "stop_sequence", "orario_programmato",
-                 "orario_osservato", "ritardo_secondi", "timestamp_feed"],
+        columns=["service_date", "trip_id", "route_id", "stop_sequence",
+                 "orario_programmato", "orario_osservato", "ritardo_secondi",
+                 "timestamp_feed"],
     )
     r = d["ritardo_secondi"]
     print(f"\n  [{citta}] {percorso.name}: {len(d):,} righe, "
@@ -143,7 +150,68 @@ def analizza_parquet(percorso: Path, citta: str, cartella_gtfs: Path) -> pd.Data
     negative = (tab["median"] < 0).sum()
     print(f"    ore con mediana negativa: {negative} su {len(tab)}")
     print(f"    (tutte negative = indizio di margine negli orari; solo di giorno = altra causa)")
+
+    tabella_per_tipo(d, ore, citta, sorted(d.service_date.unique()), cartella_gtfs)
     return d
+
+
+def tipi_di_linea(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path) -> dict[str, int]:
+    """Corrispondenza linea -> tipo di veicolo, dall'orario statico."""
+    from src.gtfs.indice_statico import carica_indice, versione_valida
+
+    for sd in date_servizio:
+        try:
+            indice = carica_indice(cartella_gtfs / citta / "index.json", citta)
+            voce = versione_valida(indice, sd)
+            if voce is None:
+                continue
+            archivio = carica_archivio(cartella_gtfs / citta / voce["file"])
+            return {
+                str(r): int(t)
+                for r, t in archivio.routes[["route_id", "route_type"]].itertuples(index=False)
+            }
+        except Exception as errore:
+            print(f"    (tipi di linea non caricabili per {sd}: {errore})")
+    return {}
+
+
+def tabella_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
+                     date_servizio: Sequence[str], cartella_gtfs: Path) -> None:
+    """Ritardo per ora e per tipo di veicolo.
+
+    Serve a mettere alla prova la spiegazione del margine negli orari. Una linea
+    in sede propria - metro, tram protetto - non incontra la congestione che il
+    margine dovrebbe assorbire, quindi se il margine fosse davvero una risposta al
+    traffico dovrebbe risultare piu' piccolo li' e piu' grande sulle linee di
+    superficie nel traffico misto. Se invece fosse uguale ovunque, la spiegazione
+    sarebbe un'altra.
+    """
+    print()
+    print("    --- 3-bis. Ritardo per ora e per TIPO DI LINEA ---")
+    mappa = tipi_di_linea(citta, date_servizio, cartella_gtfs)
+    if not mappa:
+        print("    tipi di linea non disponibili")
+        return
+    d = d.assign(ora=ore, tipo=d.route_id.map(mappa))
+    noti = d[d.tipo.notna()]
+    if noti.empty:
+        print("    nessuna riga con tipo di linea riconosciuto")
+        return
+    presenti = sorted(noti.tipo.unique())
+    etichette = [TIPI_LINEA.get(int(x), f"tipo {int(x)}") for x in presenti]
+    print(f"    righe con tipo noto: {len(noti):,} su {len(d):,}")
+    print(f"    {'ora':>4} " + " ".join(f"{e:>16}" for e in etichette))
+    for ora in sorted(noti.ora.unique()):
+        blocco = noti[noti.ora == ora]
+        celle = []
+        for tipo in presenti:
+            s = blocco[blocco.tipo == tipo]
+            celle.append(f"{_mediana(s.ritardo_secondi.values):>8}({len(s):>6,})"
+                         if len(s) else f"{'-':>16}")
+        print(f"    {ora:>4} " + " ".join(celle))
+    print(f"    {'tutte':>4} " + " ".join(
+        f"{_mediana(noti[noti.tipo == tipo].ritardo_secondi.values):>8}"
+        f"({len(noti[noti.tipo == tipo]):>6,})" for tipo in presenti))
 
 
 def corse_oltre_24h(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path) -> set[str]:
@@ -162,11 +230,91 @@ def corse_oltre_24h(citta: str, date_servizio: Iterable[str], cartella_gtfs: Pat
 
 
 # =============================================================================
-# 2, 4-6. Quadri che richiedono i dump grezzi
+# Sorgente dei dump: cartella sciolta oppure archivio compresso
 # =============================================================================
 
 
-def finestre_di_dump(cartella: Path, quante: int, per_finestra: int) -> list[list[Path]]:
+class SorgenteDump:
+    """I dump di una giornata, letti dalla cartella o dall'archivio compresso.
+
+    Il consolidamento notturno comprime i ``.pb`` del giorno in ``grezzi.tar.gz``
+    e rimuove la forma sciolta, quindi una diagnosi su un giorno passato non
+    trova piu' la cartella. Poiche' il motivo per cui questa diagnosi e' uno
+    script e non un comando incollato a mano e' proprio la ripetibilita' su
+    qualunque giorno, la lettura dall'archivio non e' un'aggiunta di comodo: senza
+    di essa lo script funzionerebbe solo sul giorno corrente.
+
+    Non si estrae nulla su disco. La VM ha spazio contato e un giorno di dump
+    sciolti pesa piu' di un gigabyte.
+    """
+
+    def __init__(self, cartella_giorno: Path) -> None:
+        self.cartella = cartella_giorno / "trip_updates"
+        self.archivio = cartella_giorno / "grezzi.tar.gz"
+        self._da_tar = not self.cartella.is_dir() and self.archivio.is_file()
+        self._nomi: list[str] = []
+
+    @property
+    def origine(self) -> str:
+        if self.cartella.is_dir():
+            return f"cartella {self.cartella.name}"
+        if self._da_tar:
+            return f"archivio {self.archivio.name}"
+        return "assente"
+
+    def disponibile(self) -> bool:
+        return self.cartella.is_dir() or self._da_tar
+
+    def nomi(self) -> list[str]:
+        """Nomi dei dump di trip_updates, ordinati per orario."""
+        if self._nomi:
+            return self._nomi
+        if self.cartella.is_dir():
+            self._nomi = sorted(p.name for p in self.cartella.glob("*.pb"))
+        elif self._da_tar:
+            # Una passata sull'archivio per l'elenco. tarfile.add ordina i membri
+            # di una cartella, quindi l'ordine dentro l'archivio e' gia' quello
+            # per orario, ma si riordina comunque per non dipendere da questo.
+            with tarfile.open(self.archivio, "r:gz") as tar:
+                self._nomi = sorted(
+                    Path(m.name).name
+                    for m in tar
+                    if m.isfile() and m.name.endswith(".pb") and "trip_updates" in m.name
+                )
+        return self._nomi
+
+    def leggi(self, voluti: Iterable[str]) -> Iterator[tuple[str, bytes]]:
+        """Contenuto dei dump richiesti, in ordine di nome.
+
+        Dall'archivio si legge con una sola passata sequenziale: su un ``.tar.gz``
+        l'accesso casuale costringerebbe a decomprimere dall'inizio a ogni
+        membro, e su un giorno intero sarebbe quadratico.
+        """
+        insieme = set(voluti)
+        if self.cartella.is_dir():
+            for nome in sorted(insieme):
+                percorso = self.cartella / nome
+                if percorso.is_file():
+                    yield nome, percorso.read_bytes()
+            return
+        if not self._da_tar:
+            return
+        trovati: dict[str, bytes] = {}
+        with tarfile.open(self.archivio, "r|gz") as tar:
+            for membro in tar:
+                if not membro.isfile() or not membro.name.endswith(".pb"):
+                    continue
+                nome = Path(membro.name).name
+                if nome not in insieme or "trip_updates" not in membro.name:
+                    continue
+                estratto = tar.extractfile(membro)
+                if estratto is not None:
+                    trovati[nome] = estratto.read()
+        for nome in sorted(trovati):
+            yield nome, trovati[nome]
+
+
+def finestre_di_nomi(nomi: Sequence[str], quante: int, per_finestra: int) -> list[list[str]]:
     """Blocchi di dump CONSECUTIVI distribuiti sulla giornata.
 
     Consecutivi e non sparsi perche' il filtro al momento del passaggio ha
@@ -175,18 +323,17 @@ def finestre_di_dump(cartella: Path, quante: int, per_finestra: int) -> list[lis
     finestra sola confonde l'ora programmata con l'anticipo della previsione, che
     e' l'errore che questo script esiste per evitare.
     """
-    tutti = sorted(cartella.glob("*.pb"))
-    if len(tutti) < per_finestra:
-        return [tutti] if tutti else []
-    passo = max(1, (len(tutti) - per_finestra) // max(1, quante - 1))
+    if len(nomi) < per_finestra:
+        return [list(nomi)] if nomi else []
+    passo = max(1, (len(nomi) - per_finestra) // max(1, quante - 1))
     finestre = []
     for k in range(quante):
-        inizio = min(k * passo, len(tutti) - per_finestra)
-        finestre.append(tutti[inizio:inizio + per_finestra])
+        inizio = min(k * passo, len(nomi) - per_finestra)
+        finestre.append(list(nomi[inizio:inizio + per_finestra]))
     return finestre
 
 
-def leggi_finestra(dumps: Sequence[Path], orari: dict) -> tuple[pd.DataFrame, dict, int, int]:
+def leggi_finestra(dumps: Sequence[tuple[str, bytes]], orari: dict) -> tuple[pd.DataFrame, dict, int, int]:
     """Estrae le osservazioni di un blocco di dump, senza deduplicarle."""
     righe = []
     corse_per_dump: list[set[str]] = []
@@ -194,10 +341,10 @@ def leggi_finestra(dumps: Sequence[Path], orari: dict) -> tuple[pd.DataFrame, di
     saltate = 0
     coppie_per_data: dict[tuple[str, int], set[str]] = defaultdict(set)
 
-    for i, percorso in enumerate(dumps):
+    for i, (_nome, contenuto) in enumerate(dumps):
         messaggio = pb.FeedMessage()
         try:
-            messaggio.ParseFromString(percorso.read_bytes())
+            messaggio.ParseFromString(contenuto)
         except Exception:
             corse_per_dump.append(set())
             continue
@@ -210,22 +357,28 @@ def leggi_finestra(dumps: Sequence[Path], orari: dict) -> tuple[pd.DataFrame, di
             trip = tu.trip.trip_id
             presenti.add(trip)
             grezza = tu.trip.start_date.strip() if tu.trip.start_date else ""
-            sd = f"{grezza[:4]}-{grezza[4:6]}-{grezza[6:]}" if len(grezza) == 8 and grezza.isdigit() else ""
+            sd = (
+                f"{grezza[:4]}-{grezza[4:6]}-{grezza[6:]}"
+                if len(grezza) == 8 and grezza.isdigit()
+                else ""
+            )
             for tappa in tu.stop_time_update:
                 if tappa.HasField("schedule_relationship") and tappa.schedule_relationship == 2:
                     saltate += 1
                     continue
-                evento = tappa.arrival if tappa.HasField("arrival") else (
-                    tappa.departure if tappa.HasField("departure") else None)
+                evento = (
+                    tappa.arrival
+                    if tappa.HasField("arrival")
+                    else (tappa.departure if tappa.HasField("departure") else None)
+                )
                 if evento is None:
                     continue
                 seq = int(tappa.stop_sequence)
                 if sd:
                     coppie_per_data[(trip, seq)].add(sd)
-                voce = orari.get(sd, {}).get((trip, seq))
-                if voce is None:
+                prog = orari.get(sd, {}).get((trip, seq))
+                if prog is None:
                     continue
-                prog = voce
                 if evento.HasField("delay"):
                     rit = int(evento.delay)
                 elif evento.HasField("time"):
@@ -243,20 +396,24 @@ def leggi_finestra(dumps: Sequence[Path], orari: dict) -> tuple[pd.DataFrame, di
 
 def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
                   cartella_rt: Path, cartella_gtfs: Path) -> None:
-    cartella = cartella_rt / citta / giorno.isoformat() / "trip_updates"
-    if not cartella.is_dir():
-        print(f"  [{citta}] cartella dump assente: {cartella}")
+    sorgente = SorgenteDump(cartella_rt / citta / giorno.isoformat())
+    if not sorgente.disponibile():
+        print(f"  [{citta}] nessun dump: ne' cartella ne' archivio in "
+              f"{cartella_rt / citta / giorno.isoformat()}")
         return
-    finestre = finestre_di_dump(cartella, quante, per_finestra)
-    if not finestre:
-        print(f"  [{citta}] nessun dump in {cartella}")
+    nomi = sorgente.nomi()
+    if not nomi:
+        print(f"  [{citta}] {sorgente.origine}: nessun dump di trip_updates")
         return
+    finestre = finestre_di_nomi(nomi, quante, per_finestra)
+    print(f"\n  [{citta}] {sorgente.origine}: {len(nomi):,} dump disponibili, "
+          f"{len(finestre)} finestre da {per_finestra}")
 
-    # Orari statici, per data di servizio, caricati una volta sola.
-    orari: dict[str, dict] = {}
+    # Orari statici, per data di servizio, caricati una volta sola. Anche il
+    # giorno precedente: le corse notturne ancora in circolazione dopo la
+    # mezzanotte portano la data di servizio del giorno prima.
     precedente = date.fromordinal(giorno.toordinal() - 1)
-    # Anche il giorno precedente: le corse notturne ancora in circolazione dopo
-    # la mezzanotte portano la data di servizio del giorno prima.
+    orari: dict[str, dict] = {}
     for sd in (giorno.isoformat(), precedente.isoformat()):
         try:
             programmato, _ = carica_orario(citta, sd, cartella_gtfs)
@@ -267,10 +424,16 @@ def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
         except Exception as errore:
             print(f"  [{citta}] orario non caricabile per {sd}: {errore}")
 
-    pezzi, saltate_tot, collisioni_tot = [], 0, 0
-    passate = []
-    for dumps in finestre:
-        d, stato, saltate, collisioni = leggi_finestra(dumps, orari)
+    # Dall'archivio conviene una passata sola per tutte le finestre insieme.
+    voluti = [n for finestra in finestre for n in finestra]
+    contenuti = dict(sorgente.leggi(voluti))
+
+    pezzi, saltate_tot, collisioni_tot, passate = [], 0, 0, []
+    for finestra in finestre:
+        blocco = [(n, contenuti[n]) for n in finestra if n in contenuti]
+        if not blocco:
+            continue
+        d, stato, saltate, collisioni = leggi_finestra(blocco, orari)
         saltate_tot += saltate
         collisioni_tot += collisioni
         if d.empty:
@@ -278,7 +441,7 @@ def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
         pezzi.append(d)
         ultimo, corse = stato["ultimo"], stato["corse"]
         for (trip, seq), i in ultimo.items():
-            if i < len(dumps) - 1 and any(trip in corse[j] for j in range(i + 1, len(dumps))):
+            if i < len(blocco) - 1 and any(trip in corse[j] for j in range(i + 1, len(blocco))):
                 riga = d[(d.trip == trip) & (d.seq == seq) & (d.dump == i)]
                 if len(riga):
                     passate.append(riga.iloc[0])
@@ -293,22 +456,18 @@ def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
     if not f.empty:
         f["ora"] = pd.to_datetime(f.prog, unit="s", utc=True).dt.tz_convert(FUSO).dt.hour
 
-    print(f"\n  [{citta}] {len(finestre)} finestre da {per_finestra} dump, "
-          f"{len(d):,} osservazioni, {saltate_tot:,} SKIPPED escluse")
+    print(f"  [{citta}] {len(d):,} osservazioni, {saltate_tot:,} SKIPPED escluse")
 
-    # ---- 2. Collisioni della chiave di deduplica
     print(f"\n    --- 2. Coppie (corsa, fermata) con piu' di una data di servizio ---")
     print(f"    collisioni nelle finestre esaminate: {collisioni_tot:,}")
     print(f"    (ogni collisione e' una riga soppressa: la chiave di deduplica")
     print(f"     non contiene la data di servizio)")
 
-    # ---- 4. Anticipo con cui le previsioni sono emesse
     print(f"\n    --- 4. Anticipo con cui la previsione e' emessa ---")
     a = d.anticipo
     print(f"    mediana {a.median()/60:>6.1f} min | q1 {a.quantile(.25)/60:>6.1f} | "
           f"q3 {a.quantile(.75)/60:>6.1f} | max {a.max()/60:>6.0f} min  (n={len(a):,})")
 
-    # ---- 5. Ritardo per anticipo DENTRO ciascuna fascia oraria
     print(f"\n    --- 5. Ritardo per anticipo, CONTROLLANDO per l'ora programmata ---")
     print(f"    {'ora':>4} " + " ".join(f"{et:>14}" for _, _, et in FASCE_ANTICIPO))
     for ora in sorted(d.ora.unique()):
@@ -321,7 +480,6 @@ def analizza_dump(citta: str, giorno: date, quante: int, per_finestra: int,
     print(f"    Se dentro una stessa riga la mediana NON varia con l'anticipo,")
     print(f"    l'ottimismo delle previsioni lontane e' escluso.")
 
-    # ---- 6. Filtro al momento del passaggio
     print(f"\n    --- 6. Filtro al momento del passaggio ---")
     if f.empty:
         print("    nessuna fermata osservata sparire mentre la corsa era ancora nel feed")

@@ -184,6 +184,26 @@ def tipi_di_linea(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path)
     return {}
 
 
+def corse_oltre_24h(citta: str, date_servizio: Iterable[str], cartella_gtfs: Path) -> set[str]:
+    """Corse il cui orario statico supera le 24 ore, per le date indicate.
+
+    Serve a distinguere il salto di giorno dalle altre cause di ritardo enorme:
+    se le corse coinvolte hanno davvero un orario oltre la mezzanotte, il salto
+    e' la spiegazione; se non ce l'hanno, l'anomalia viene da altrove.
+    """
+    corse: set[str] = set()
+    for sd in date_servizio:
+        try:
+            programmato, _ = carica_orario(citta, sd, cartella_gtfs)
+        except Exception as errore:  # l'archivio puo' mancare per quella data
+            print(f"    (orario non caricabile per {sd}: {errore})")
+            continue
+        for (trip, _seq), (_stop, secondi) in programmato.items():
+            if secondi >= GIORNO:
+                corse.add(trip)
+    return corse
+
+
 def _istante(valore) -> str:
     """Formatta un istante POSIX, tollerando i nulli.
 

@@ -58,6 +58,7 @@ if str(RADICE) not in sys.path:
     sys.path.insert(0, str(RADICE))
 
 from src.gtfs.calendar import istante_di_servizio  # noqa: E402
+from src.consolida.sorgente import SorgenteDump
 from src.gtfs.indice_statico import carica_indice, versione_valida  # noqa: E402
 from src.gtfs.loader import carica_archivio  # noqa: E402
 
@@ -75,6 +76,13 @@ COLONNE = (
     "ritardo_secondi",
     "timestamp_feed",
     "timestamp_poll",
+    # Provenienza dei due campi derivati. Senza queste colonne il parquet mescola
+    # grandezze diverse senza dirlo: su Torino il feed non manda mai insieme
+    # l'orario e il ritardo, quindi due terzi delle righe hanno il ritardo
+    # dichiarato dall'azienda e un terzo una nostra ricostruzione, e le due
+    # popolazioni differiscono di quarantacinque secondi alla mediana.
+    "origine_orario",
+    "origine_ritardo",
 )
 
 # Ogni quante righe si scarica un gruppo su disco. Serve a tenere la memoria
@@ -142,9 +150,9 @@ class Osservazione:
     timestamp_poll: int
 
 
-def _istante_dal_nome(percorso: Path, giorno: date, fuso: ZoneInfo) -> int:
+def _istante_dal_nome(nome: str, giorno: date, fuso: ZoneInfo) -> int:
     """Ricava l'istante del poll dal nome del file, che e' l'ora locale HHMMSS."""
-    base = percorso.stem.split("_")[0]
+    base = nome.rsplit(".", 1)[0].split("_")[0]
     try:
         ore, minuti, secondi = int(base[:2]), int(base[2:4]), int(base[4:6])
     except (ValueError, IndexError):
@@ -153,17 +161,22 @@ def _istante_dal_nome(percorso: Path, giorno: date, fuso: ZoneInfo) -> int:
     return int(locale.timestamp())
 
 
-def leggi_dump(percorso: Path, giorno: date, fuso: ZoneInfo) -> Iterator[Osservazione]:
-    """Estrae le osservazioni da un singolo dump, senza interpretarle."""
+def leggi_dump(nome: str, contenuto: bytes, giorno: date, fuso: ZoneInfo) -> Iterator[Osservazione]:
+    """Estrae le osservazioni da un singolo dump, senza interpretarle.
+
+    Riceve il contenuto e non il percorso perche' i dump di un giorno passato
+    stanno dentro ``grezzi.tar.gz`` e non esistono come file sciolti: leggerli
+    richiederebbe altrimenti di estrarli su disco.
+    """
     messaggio = gtfs_realtime_pb2.FeedMessage()
     try:
-        messaggio.ParseFromString(percorso.read_bytes())
+        messaggio.ParseFromString(contenuto)
     except Exception:
-        log.warning("dump illeggibile, saltato: %s", percorso.name)
+        log.warning("dump illeggibile, saltato: %s", nome)
         return
 
     timestamp_feed = int(messaggio.header.timestamp)
-    timestamp_poll = _istante_dal_nome(percorso, giorno, fuso)
+    timestamp_poll = _istante_dal_nome(nome, giorno, fuso)
     predefinita = giorno.isoformat()
 
     for entita in messaggio.entity:
@@ -226,8 +239,16 @@ def carica_orario(citta: str, service_date: str, cartella_gtfs: Path) -> tuple[d
     archivio = carica_archivio(archivio_zip, con_stop_times=True)
     assert archivio.stop_times is not None
 
+    # Si costruisce prima la mappa piccola, poi si lascia andare tutto cio' che
+    # non serve piu': l'indice degli orari di Roma occupa 1,63 GB e il DataFrame
+    # da cui nasce altrettanto, quindi tenerli vivi insieme porta il picco a 2,16
+    # GB per nulla. Rilasciare qui non cambia il risultato e dimezza il picco.
+    linea_di = {
+        str(t): str(r) for t, r in archivio.trips[["trip_id", "route_id"]].itertuples(index=False)
+    }
     orari = archivio.stop_times[["trip_id", "stop_id", "stop_sequence", "arrival_time"]]
     orari = orari.dropna(subset=["arrival_time"])
+    del archivio
     # Chiave (corsa, posizione) e non (corsa, fermata, posizione): Torino non
     # trasmette lo stop_id, e la specifica garantisce che stop_sequence sia
     # univoco dentro una corsa. Il valore porta anche la fermata, che serve a
@@ -236,9 +257,7 @@ def carica_orario(citta: str, service_date: str, cartella_gtfs: Path) -> tuple[d
         (str(t), int(q)): (str(s), int(a))
         for t, s, q, a in orari.itertuples(index=False)
     }
-    linea_di = {
-        str(t): str(r) for t, r in archivio.trips[["trip_id", "route_id"]].itertuples(index=False)
-    }
+    del orari
     return programmato, linea_di
 
 
@@ -261,6 +280,8 @@ def _schema() -> pa.Schema:
             ("ritardo_secondi", pa.int32()),
             ("timestamp_feed", pa.int64()),
             ("timestamp_poll", pa.int64()),
+            ("origine_orario", pa.string()),
+            ("origine_ritardo", pa.string()),
         ]
     )
 
@@ -291,13 +312,15 @@ def consolida_giorno(
     """Converte i dump di un giorno in parquet. Non tocca i grezzi."""
     politica = politica or Politica.dal_nome("tutti")
     zona = ZoneInfo(fuso)
-    cartella = radice / "data" / "raw" / "rt" / citta / giorno.isoformat() / "trip_updates"
-    if not cartella.is_dir():
-        raise ErroreConsolidamento(f"[{citta}] nessun dump per {giorno}: {cartella} non esiste.")
-
-    dump = sorted(cartella.glob("*.pb"))
+    sorgente = SorgenteDump(radice / "data" / "raw" / "rt" / citta / giorno.isoformat())
+    if not sorgente.disponibile():
+        raise ErroreConsolidamento(
+            f"[{citta}] nessun dump per {giorno}: ne' la cartella sciolta ne' l'archivio."
+        )
+    dump = sorgente.nomi()
     if not dump:
-        raise ErroreConsolidamento(f"[{citta}] nessun file .pb in {cartella}.")
+        raise ErroreConsolidamento(f"[{citta}] nessun dump di trip_updates per {giorno}.")
+    log.info("[%s] %s: %d dump da %s", citta, giorno, len(dump), sorgente.origine)
 
     destinazione = radice / "data" / "processed" / "osservazioni" / citta / f"{giorno.isoformat()}.parquet"
     destinazione.parent.mkdir(parents=True, exist_ok=True)
@@ -308,8 +331,8 @@ def consolida_giorno(
     # Stato della deduplica: per ogni passaggio, l'ultimo valore osservato. Basta
     # questo, e non l'insieme di tutti i valori, perche' la politica registra i
     # CAMBI: la memoria resta proporzionale ai passaggi, non alle osservazioni.
-    ultimo_valore: dict[tuple[str, int], int | None] = {}
-    ultima_riga: dict[tuple[str, int], list] = {}
+    ultimo_valore: dict[tuple[str, str, int], int | None] = {}
+    ultima_riga: dict[tuple[str, str, int], list] = {}
     # Contatore in una lista per poterlo aggiornare dentro il ciclo senza nonlocal.
     divergenze = [0]
 
@@ -330,8 +353,8 @@ def consolida_giorno(
         accumulate = []
 
     try:
-        for percorso in dump:
-            for osservazione in leggi_dump(percorso, giorno, zona):
+        for nome, contenuto in sorgente.leggi():
+            for osservazione in leggi_dump(nome, contenuto, giorno, zona):
                 stu_totali += 1
                 if osservazione.service_date not in orari:
                     orari[osservazione.service_date] = carica_orario(
@@ -339,8 +362,20 @@ def consolida_giorno(
                     )
                 programmato, linea_di = orari[osservazione.service_date]
 
-                chiave = (osservazione.trip_id, osservazione.stop_sequence)
-                voce = programmato.get(chiave)
+                # La data di servizio fa parte della chiave, e non e' un dettaglio:
+                # attorno alla mezzanotte una cartella contiene due giorni di
+                # servizio, e senza di essa due passaggi distinti della stessa
+                # corsa condividono lo stesso posto. Il secondo verrebbe scartato
+                # come valore invariato. Misurato sul 28 agosto: 9.606 coppie
+                # coinvolte su Roma e quasi 194.000 righe, il 2% del file.
+                # Due chiavi distinte, e confonderle e' un errore che non si vede:
+                # l'orario statico e' indicizzato per (corsa, posizione), perche'
+                # e' gia' relativo a una data di servizio; la deduplica ha invece
+                # bisogno della data, perche' la stessa corsa ricorre in giorni
+                # diversi dentro la stessa cartella.
+                chiave_orario = (osservazione.trip_id, osservazione.stop_sequence)
+                chiave = (osservazione.service_date, *chiave_orario)
+                voce = programmato.get(chiave_orario)
                 fermata_statica, secondi = voce if voce is not None else ("", None)
 
                 # Lo stop_id del feed ha la precedenza quando c'e'; altrimenti
@@ -362,10 +397,14 @@ def consolida_giorno(
 
                 osservato = osservazione.orario_osservato
                 ritardo = osservazione.ritardo_dichiarato
+                origine_orario = "trasmesso" if osservato is not None else "assente"
+                origine_ritardo = "dichiarato" if ritardo is not None else "assente"
                 if osservato is None and ritardo is not None and orario_programmato is not None:
                     osservato = orario_programmato + ritardo
+                    origine_orario = "sintetizzato"
                 if ritardo is None and osservato is not None and orario_programmato is not None:
                     ritardo = osservato - orario_programmato
+                    origine_ritardo = "ricalcolato"
                 if osservato is None:
                     continue
 
@@ -385,6 +424,8 @@ def consolida_giorno(
                     ritardo,
                     osservazione.timestamp_feed,
                     osservazione.timestamp_poll,
+                    origine_orario,
+                    origine_ritardo,
                 ]
 
                 if politica.nome == "ultimo":
@@ -410,7 +451,7 @@ def consolida_giorno(
             citta, divergenze[0],
         )
 
-    mb_grezzi = sum(p.stat().st_size for p in dump) / 1_048_576
+    mb_grezzi = sorgente.byte_totali() / 1_048_576
     mb_parquet = destinazione.stat().st_size / 1_048_576
     passaggi = len(ultimo_valore) or len(ultima_riga)
 

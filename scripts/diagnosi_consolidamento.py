@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tarfile
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
@@ -63,6 +62,7 @@ if str(RADICE) not in sys.path:
 from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
 
 from src.consolida.notturno import carica_orario  # noqa: E402
+from src.consolida.sorgente import SorgenteDump  # noqa: E402
 from src.gtfs.calendar import istante_di_servizio  # noqa: E402
 from src.gtfs.loader import carica_archivio  # noqa: E402
 
@@ -648,91 +648,6 @@ def quadro_per_tipo(d: pd.DataFrame, ore: pd.Series, citta: str,
         f"{_mediana(ristretto[ristretto.tipo == tipo].ritardo_secondi.values):>8}"
         f"({len(ristretto[ristretto.tipo == tipo]):>6,})" for tipo in presenti))
     print(f"    Se qui la differenza fra modi sparisce, era differenza fra corridoi.")
-
-
-# =============================================================================
-# Sorgente dei dump: cartella sciolta oppure archivio compresso
-# =============================================================================
-
-
-class SorgenteDump:
-    """I dump di una giornata, letti dalla cartella o dall'archivio compresso.
-
-    Il consolidamento notturno comprime i ``.pb`` del giorno in ``grezzi.tar.gz``
-    e rimuove la forma sciolta, quindi una diagnosi su un giorno passato non
-    trova piu' la cartella. Poiche' il motivo per cui questa diagnosi e' uno
-    script e non un comando incollato a mano e' proprio la ripetibilita' su
-    qualunque giorno, la lettura dall'archivio non e' un'aggiunta di comodo: senza
-    di essa lo script funzionerebbe solo sul giorno corrente.
-
-    Non si estrae nulla su disco. La VM ha spazio contato e un giorno di dump
-    sciolti pesa piu' di un gigabyte.
-    """
-
-    def __init__(self, cartella_giorno: Path) -> None:
-        self.cartella = cartella_giorno / "trip_updates"
-        self.archivio = cartella_giorno / "grezzi.tar.gz"
-        self._da_tar = not self.cartella.is_dir() and self.archivio.is_file()
-        self._nomi: list[str] = []
-
-    @property
-    def origine(self) -> str:
-        if self.cartella.is_dir():
-            return f"cartella {self.cartella.name}"
-        if self._da_tar:
-            return f"archivio {self.archivio.name}"
-        return "assente"
-
-    def disponibile(self) -> bool:
-        return self.cartella.is_dir() or self._da_tar
-
-    def nomi(self) -> list[str]:
-        """Nomi dei dump di trip_updates, ordinati per orario."""
-        if self._nomi:
-            return self._nomi
-        if self.cartella.is_dir():
-            self._nomi = sorted(p.name for p in self.cartella.glob("*.pb"))
-        elif self._da_tar:
-            # Una passata sull'archivio per l'elenco. tarfile.add ordina i membri
-            # di una cartella, quindi l'ordine dentro l'archivio e' gia' quello
-            # per orario, ma si riordina comunque per non dipendere da questo.
-            with tarfile.open(self.archivio, "r:gz") as tar:
-                self._nomi = sorted(
-                    Path(m.name).name
-                    for m in tar
-                    if m.isfile() and m.name.endswith(".pb") and "trip_updates" in m.name
-                )
-        return self._nomi
-
-    def leggi(self, voluti: Iterable[str]) -> Iterator[tuple[str, bytes]]:
-        """Contenuto dei dump richiesti, in ordine di nome.
-
-        Dall'archivio si legge con una sola passata sequenziale: su un ``.tar.gz``
-        l'accesso casuale costringerebbe a decomprimere dall'inizio a ogni
-        membro, e su un giorno intero sarebbe quadratico.
-        """
-        insieme = set(voluti)
-        if self.cartella.is_dir():
-            for nome in sorted(insieme):
-                percorso = self.cartella / nome
-                if percorso.is_file():
-                    yield nome, percorso.read_bytes()
-            return
-        if not self._da_tar:
-            return
-        trovati: dict[str, bytes] = {}
-        with tarfile.open(self.archivio, "r|gz") as tar:
-            for membro in tar:
-                if not membro.isfile() or not membro.name.endswith(".pb"):
-                    continue
-                nome = Path(membro.name).name
-                if nome not in insieme or "trip_updates" not in membro.name:
-                    continue
-                estratto = tar.extractfile(membro)
-                if estratto is not None:
-                    trovati[nome] = estratto.read()
-        for nome in sorted(trovati):
-            yield nome, trovati[nome]
 
 
 def finestre_di_nomi(nomi: Sequence[str], quante: int, per_finestra: int) -> list[list[str]]:
